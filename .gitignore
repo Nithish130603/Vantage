@@ -1,0 +1,17 @@
+*.duckdb
+*.pkl
+*.pyc
+__pycache__/
+.env
+.env.local
+.env.production
+node_modules/
+.next/
+.DS_Store
+data/fsq-raw/
+pipeline_run.json
+eda_decisions.json
+vantage_export/
+svd.pkl
+/backend/vantage.duckdb
+/backend/*.pkl

@@ -1,0 +1,61 @@
+12:22:09  INFO     ═════════════════════════════════════════════════════════════════
+12:22:09  INFO       Vantage Precompute Pipeline
+12:22:09  INFO       Categories: ['Café', 'Gym & Fitness', 'Pharmacy', 'Restaurant', 'Retail']
+12:22:09  INFO     ═════════════════════════════════════════════════════════════════
+12:22:09  INFO     Loaded TF-IDF vectorizer (200 features)
+12:22:09  INFO     Suburbs to process: 7733
+12:22:09  INFO     Suburb matrix: 7733 × 200
+12:22:09  INFO     ── Enriching suburb_cells with locality + state ──────────────
+12:22:12  INFO       Updated 7726 suburb_cells with locality/state  (3.4 s)
+12:22:12  INFO     ── Computing gold standard vectors ──────────────────────────
+12:22:12  INFO       Café: 400 survivor cells → gold vector computed (top: coffee, caf, freight)
+12:22:12  INFO       Gym & Fitness: 400 survivor cells → gold vector computed (top: coffee, freight, caf)
+12:22:12  INFO       Pharmacy: 400 survivor cells → gold vector computed (top: coffee, freight, caf)
+12:22:12  INFO       Restaurant: 400 survivor cells → gold vector computed (top: coffee, caf, freight)
+12:22:12  INFO       Retail: 400 survivor cells → gold vector computed (top: coffee, freight, caf)
+12:22:12  INFO       Gold standards computed for 5 categories  (0.0 s)
+12:22:12  INFO     ── Scoring all suburbs × categories ──────────────────────────
+12:22:12  INFO       Fetching venue data for bulk scoring...
+12:22:13  INFO       Diversity scores: 23942 cells
+12:22:13  INFO       Risk scores: 24575 cells
+/Users/hansika/Library/Python/3.9/lib/python/site-packages/sklearn/utils/extmath.py:203: RuntimeWarning: divide by zero encountered in matmul
+  ret = a @ b
+/Users/hansika/Library/Python/3.9/lib/python/site-packages/sklearn/utils/extmath.py:203: RuntimeWarning: overflow encountered in matmul
+  ret = a @ b
+/Users/hansika/Library/Python/3.9/lib/python/site-packages/sklearn/utils/extmath.py:203: RuntimeWarning: invalid value encountered in matmul
+  ret = a @ b
+12:22:27  INFO       ✓  Café — 7733 suburbs scored  (14.0 s)
+/Users/hansika/Library/Python/3.9/lib/python/site-packages/sklearn/utils/extmath.py:203: RuntimeWarning: divide by zero encountered in matmul
+  ret = a @ b
+/Users/hansika/Library/Python/3.9/lib/python/site-packages/sklearn/utils/extmath.py:203: RuntimeWarning: overflow encountered in matmul
+  ret = a @ b
+/Users/hansika/Library/Python/3.9/lib/python/site-packages/sklearn/utils/extmath.py:203: RuntimeWarning: invalid value encountered in matmul
+  ret = a @ b
+12:22:40  INFO       ✓  Gym & Fitness — 7733 suburbs scored  (12.4 s)
+/Users/hansika/Library/Python/3.9/lib/python/site-packages/sklearn/utils/extmath.py:203: RuntimeWarning: divide by zero encountered in matmul
+  ret = a @ b
+/Users/hansika/Library/Python/3.9/lib/python/site-packages/sklearn/utils/extmath.py:203: RuntimeWarning: overflow encountered in matmul
+  ret = a @ b
+/Users/hansika/Library/Python/3.9/lib/python/site-packages/sklearn/utils/extmath.py:203: RuntimeWarning: invalid value encountered in matmul
+  ret = a @ b
+12:22:52  INFO       ✓  Pharmacy — 7733 suburbs scored  (12.8 s)
+/Users/hansika/Library/Python/3.9/lib/python/site-packages/sklearn/utils/extmath.py:203: RuntimeWarning: divide by zero encountered in matmul
+  ret = a @ b
+/Users/hansika/Library/Python/3.9/lib/python/site-packages/sklearn/utils/extmath.py:203: RuntimeWarning: overflow encountered in matmul
+  ret = a @ b
+/Users/hansika/Library/Python/3.9/lib/python/site-packages/sklearn/utils/extmath.py:203: RuntimeWarning: invalid value encountered in matmul
+  ret = a @ b
+12:23:06  INFO       ✓  Restaurant — 7733 suburbs scored  (13.3 s)
+/Users/hansika/Library/Python/3.9/lib/python/site-packages/sklearn/utils/extmath.py:203: RuntimeWarning: divide by zero encountered in matmul
+  ret = a @ b
+/Users/hansika/Library/Python/3.9/lib/python/site-packages/sklearn/utils/extmath.py:203: RuntimeWarning: overflow encountered in matmul
+  ret = a @ b
+/Users/hansika/Library/Python/3.9/lib/python/site-packages/sklearn/utils/extmath.py:203: RuntimeWarning: invalid value encountered in matmul
+  ret = a @ b
+12:23:19  INFO       ✓  Retail — 7733 suburbs scored  (13.0 s)
+12:23:19  INFO       Total: 38665 score records  (66.4 s)
+12:23:19  INFO     
+12:23:19  INFO     ═════════════════════════════════════════════════════════════════
+12:23:19  INFO       PRECOMPUTE COMPLETE
+12:23:19  INFO       Gold standards + suburb_scores written to /Users/hansika/vantage/backend/vantage.duckdb
+12:23:19  INFO     ═════════════════════════════════════════════════════════════════
