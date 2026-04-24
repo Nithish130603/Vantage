@@ -117,19 +117,36 @@ def get_location(
     """, [h3_r7]).fetchall()
     top_cats = [{"category": r[0], "count": r[1]} for r in top_cats_rows]
 
+    # Risk factors chart — parse the JSON text from DB
+    risk_chart: list[dict] = []
+    top_risk_raw = row[11]
+    if top_risk_raw:
+        try:
+            factors = json_lib.loads(top_risk_raw)
+            risk_chart = [{"label": f, "value": 1} for f in factors]
+        except Exception:
+            pass
+    if not risk_chart:
+        risk_chart = [
+            {"label": f"Risk score: {round(risk_score * 100)}/100", "value": round(risk_score * 100)},
+        ]
+
+    # Fingerprint match chart — top surrounding categories as evidence
+    fp_chart = [{"category": c["category"], "count": c["count"]} for c in top_cats[:8]]
+
     signals = [
         SignalDetail(
             name="Fingerprint Match",
             score=round(fp_score, 3),
             badge=f"{round(fp_score * 100)}%",
-            description="How closely this suburb's commercial mix matches your franchise DNA",
-            chart_data=[],
+            description="How closely this suburb's surrounding businesses match the commercial ecosystem your franchise thrives in",
+            chart_data=fp_chart,
         ),
         SignalDetail(
             name="Market Trajectory",
             score=round(traj_score, 3),
             badge=traj_label,
-            description="Mann-Kendall trend in venue creation over 24 months",
+            description="Whether new businesses are opening here — a growing market means more foot traffic and lower vacancy risk",
             chart_data=monthly_series,
         ),
         SignalDetail(
@@ -143,15 +160,15 @@ def get_location(
             name="Ecosystem Diversity",
             score=round(div_score, 3),
             badge=f"{round(div_score * 100)}%",
-            description="Shannon entropy of venue category mix — richer ecosystem drives more foot traffic",
+            description="How varied the local business mix is — diverse neighbourhoods generate more cross-category foot traffic",
             chart_data=top_cats[:8],
         ),
         SignalDetail(
             name="Risk Signals",
             score=round(risk_score, 3),
             badge=risk_level,
-            description="Composite of closure rate, market saturation, and venue immaturity",
-            chart_data=[],
+            description="Composite of how many businesses have closed here, how saturated the category is, and how stable the market has been",
+            chart_data=risk_chart,
         ),
     ]
 

@@ -178,11 +178,8 @@ def _vec_for_h3(h3_r7: str) -> np.ndarray | None:
 
 @router.post("/fingerprint", response_model=FingerprintResponse)
 def build_fingerprint(body: FingerprintRequest):
-    vectorizer    = state["vectorizer"]
     cell_ids      = state["cell_ids"]
     suburb_matrix = state["suburb_matrix"]
-    feature_names = vectorizer.get_feature_names_out()
-
     # ── Gold standard vector ──────────────────────────────────────────────────
     gold_vec = state.get("gold_vectors", {}).get(body.category)
     if gold_vec is None:
@@ -257,9 +254,17 @@ def build_fingerprint(body: FingerprintRequest):
         fn = np.linalg.norm(fv_avg)
         fv_avg = fv_avg / (fn + 1e-9)
         failure_vector = [round(float(x), 6) for x in fv_avg]
-        top_fail_idx = np.argsort(fv_avg)[::-1][:3]
-        failure_summary = "Failure locations are near: " + ", ".join(
-            feature_names[i].title() for i in top_fail_idx
+        top_fail_cells = [cell_ids[i] for i in np.argsort(suburb_matrix @ fv_avg)[::-1][:20]]
+        fail_ph = ", ".join(f"'{c}'" for c in top_fail_cells)
+        fail_cats = [r[0] for r in state["get_con"]().execute(f"""
+            SELECT category_label, COUNT(*) AS cnt FROM venues
+            WHERE h3_r7 IN ({fail_ph}) AND is_closed = false
+              AND category_label IS NOT NULL
+            GROUP BY category_label ORDER BY cnt DESC LIMIT 3
+        """).fetchall()]
+        failure_summary = (
+            "Struggling locations tend to be near: " + ", ".join(fail_cats) + "."
+            if fail_cats else "Failure pattern identified."
         )
 
     # ── Gold standard match ───────────────────────────────────────────────────
@@ -273,18 +278,27 @@ def build_fingerprint(body: FingerprintRequest):
     top20_idx = np.argsort(sims)[::-1][:20]
     top_suburb_h3s = [cell_ids[i] for i in top20_idx]
 
-    # ── Top categories from real TF-IDF feature names ────────────────────────
-    # Use lift (ratio to corpus average) to find distinctive features, not absolute weight.
-    avg_vec = np.mean(suburb_matrix, axis=0).astype(np.float32)
-    lift = final_vec / (avg_vec + 1e-9)
-    top_idx = np.argsort(lift)[::-1][:8]
+    # ── Top categories from actual venue data in gold-standard suburbs ───────
+    # Query the most common venue category_labels from the top-matching suburbs
+    # rather than exposing raw TF-IDF tokens to the UI.
+    top_cell_ids = [cell_ids[i] for i in np.argsort(suburb_matrix @ final_vec)[::-1][:50]]
+    placeholders = ", ".join(f"'{c}'" for c in top_cell_ids)
+    cat_rows = state["get_con"]().execute(f"""
+        SELECT category_label, COUNT(*) AS cnt
+        FROM venues
+        WHERE h3_r7 IN ({placeholders})
+          AND is_closed = false
+          AND category_label IS NOT NULL
+          AND category_label NOT ILIKE '%road%'
+          AND category_label NOT ILIKE '%bus stop%'
+        GROUP BY category_label
+        ORDER BY cnt DESC
+        LIMIT 8
+    """).fetchall()
+    total_cat = sum(r[1] for r in cat_rows) or 1
     top_categories = [
-        {
-            "category": feature_names[i].replace("_", " "),
-            "weight": round(float(final_vec[i]), 4),
-        }
-        for i in top_idx
-        if final_vec[i] > 0.005
+        {"category": row[0], "weight": round(row[1] / total_cat, 4)}
+        for row in cat_rows
     ]
 
     # ── DNA summary ───────────────────────────────────────────────────────────
@@ -313,13 +327,36 @@ def build_fingerprint(body: FingerprintRequest):
         )
 
     # ── Improvement hint ──────────────────────────────────────────────────────
-    diff = gold_vec - final_vec
-    gap_idx = np.argsort(diff)[::-1][:3]
-    gap_cats = [feature_names[i].replace("_", " ") for i in gap_idx if diff[i] > 0.005]
+    # Compare gold-standard suburbs vs client suburbs by actual venue category mix
+    gold_top_ids = [cell_ids[i] for i in np.argsort(suburb_matrix @ gold_vec)[::-1][:30]]
+    if top_cell_ids and gold_top_ids:
+        gold_ph = ", ".join(f"'{c}'" for c in gold_top_ids)
+        client_ph = ", ".join(f"'{c}'" for c in top_cell_ids[:30])
+        gold_mix = {r[0]: r[1] for r in state["get_con"]().execute(f"""
+            SELECT category_label, COUNT(*) FROM venues
+            WHERE h3_r7 IN ({gold_ph}) AND is_closed = false
+              AND category_label IS NOT NULL GROUP BY category_label
+        """).fetchall()}
+        client_mix = {r[0]: r[1] for r in state["get_con"]().execute(f"""
+            SELECT category_label, COUNT(*) FROM venues
+            WHERE h3_r7 IN ({client_ph}) AND is_closed = false
+              AND category_label IS NOT NULL GROUP BY category_label
+        """).fetchall()}
+        gold_total = sum(gold_mix.values()) or 1
+        client_total = sum(client_mix.values()) or 1
+        gaps = sorted(
+            [(cat, gold_mix[cat] / gold_total - client_mix.get(cat, 0) / client_total)
+             for cat in gold_mix if gold_mix[cat] / gold_total > 0.01],
+            key=lambda x: -x[1]
+        )[:3]
+        gap_cats = [g[0] for g in gaps if g[1] > 0.005]
+    else:
+        gap_cats = []
     improvement_hint = (
-        "Gold standard locations have more: " + ", ".join(gap_cats) + "."
+        "Successful " + body.category.lower() + " businesses are typically surrounded by more: "
+        + ", ".join(gap_cats) + "."
         if gap_cats else
-        "Your DNA closely matches the gold standard for this category."
+        "Your location profile closely matches the industry benchmark for this category."
     )
 
     # ── Data confidence ───────────────────────────────────────────────────────

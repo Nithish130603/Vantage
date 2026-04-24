@@ -18,6 +18,9 @@ import warnings
 from contextlib import asynccontextmanager
 from pathlib import Path
 
+from dotenv import load_dotenv
+load_dotenv(Path(__file__).parent / ".env")
+
 warnings.filterwarnings("ignore", category=UserWarning)
 
 import duckdb
@@ -28,7 +31,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from sklearn.feature_extraction.text import TfidfVectorizer
 
 from state import state
-from routers import fingerprint, scan, location, embedding, report, places
+from routers import fingerprint, scan, location, embedding, report, places, categories
+from routers.agent import router as agent_router
 
 BASE_DIR = Path(__file__).parent
 log = logging.getLogger("vantage")
@@ -85,14 +89,16 @@ def _rebuild_tfidf(con, tfidf_path: Path) -> TfidfVectorizer:
         ORDER BY h3_r7
     """).fetchall()
 
-    docs = [_doc_to_leaves(r[1]) for r in rows]
+    docs = [r[1] for r in rows]  # raw category_label docs, not leaf-converted
 
-    # token_pattern matches any non-whitespace run, so "Gym_and_Studio" is one token
+    # IMPORTANT: these settings must match pipeline.py step_tfidf() exactly
+    # so the vocabulary is compatible with precomputed suburb_scores.
     vec = TfidfVectorizer(
-        max_features=500,
+        analyzer="word",
+        token_pattern=r"[A-Za-z][A-Za-z ]+",  # keep multi-word categories
+        ngram_range=(1, 2),
+        max_features=min(500, 500),
         sublinear_tf=True,
-        lowercase=False,
-        token_pattern=r"[^\s]+",
     )
     vec.fit(docs)
     joblib.dump(vec, tfidf_path)
@@ -199,13 +205,26 @@ async def lifespan(app: FastAPI):
 
 # ── App ───────────────────────────────────────────────────────────────────────
 
-app = FastAPI(title="Vantage API", version="1.0.0", lifespan=lifespan)
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
+from slowapi.middleware import SlowAPIMiddleware
 
+limiter = Limiter(key_func=get_remote_address, default_limits=["120/minute"])
+
+app = FastAPI(title="Vantage API", version="1.0.0", lifespan=lifespan)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+app.add_middleware(SlowAPIMiddleware)
+
+import os as _os
+_frontend_origin = _os.environ.get("FRONTEND_ORIGIN", "http://localhost:3000")
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=[_frontend_origin, "http://localhost:3000"],
     allow_methods=["*"],
     allow_headers=["*"],
+    expose_headers=["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
 )
 
 app.include_router(fingerprint.router)
@@ -214,6 +233,8 @@ app.include_router(location.router)
 app.include_router(embedding.router)
 app.include_router(report.router)
 app.include_router(places.router)
+app.include_router(categories.router)
+app.include_router(agent_router)
 
 
 @app.get("/health")

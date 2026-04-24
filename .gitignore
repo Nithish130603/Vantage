@@ -1,6 +1,7 @@
 *.duckdb
 *.pkl
 *.pyc
+*.log
 __pycache__/
 .env
 .env.local

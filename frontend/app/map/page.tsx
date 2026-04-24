@@ -11,13 +11,17 @@ import {
   TIER_LABEL,
   type Tier,
 } from "@/lib/api";
-import { ArrowLeft, ChevronRight, Info, Bookmark, BookmarkCheck } from "lucide-react";
+import { ArrowLeft, ChevronRight, Info, Bookmark, BookmarkCheck, LayoutDashboard } from "lucide-react";
+import { supabaseEnabled } from "@/lib/supabase";
 import dynamic from "next/dynamic";
 
 const OpportunityMap = dynamic(
   () => import("@/components/map/OpportunityMap"),
   { ssr: false, loading: () => <div className="flex-1 bg-[#0D0D10]" /> }
 );
+
+const ChatWidget = dynamic(() => import("@/components/ui/ChatWidget"), { ssr: false });
+const CompareDrawer = dynamic(() => import("@/components/ui/CompareDrawer"), { ssr: false });
 
 type Filter = Tier | "ALL" | "SAVED" | "EXACT_MATCH";
 
@@ -477,6 +481,16 @@ function MapContent() {
             activeFilter={filter}
           />
         )}
+
+        {supabaseEnabled && (
+          <button
+            onClick={() => router.push("/dashboard")}
+            className="ml-auto flex items-center gap-1.5 text-xs text-[#555566] hover:text-[#0D7377] transition-colors shrink-0 font-mono"
+          >
+            <LayoutDashboard size={13} />
+            Dashboard
+          </button>
+        )}
       </div>
 
       <div className="flex flex-1 overflow-hidden">
@@ -722,6 +736,23 @@ function MapContent() {
           </AnimatePresence>
         </div>
       </div>
+
+      {/* ── AI widgets ─────────────────────────────────────── */}
+      <ChatWidget
+        category={category}
+        h3_r7={selected?.h3_r7}
+        fingerprintResult={dna as Record<string, unknown>}
+      />
+      <CompareDrawer
+        savedH3s={[...savedH3s]}
+        category={category}
+        fingerprintResult={dna as Record<string, unknown>}
+        savedNames={Object.fromEntries(
+          results
+            .filter((r) => savedH3s.has(r.h3_r7))
+            .map((r) => [r.h3_r7, `${r.locality}, ${r.state}`])
+        )}
+      />
     </div>
   );
 }

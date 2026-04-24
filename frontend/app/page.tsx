@@ -1,13 +1,17 @@
 "use client";
 
-import { useState } from "react";
+import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { api, type FingerprintRequest } from "@/lib/api";
 import SuburbTagInput from "@/components/ui/SuburbTagInput";
 
-const CATEGORIES = ["Gym & Fitness", "Café", "Pharmacy"];
+const FALLBACK_CATEGORIES = ["Gym & Fitness", "Café", "Pharmacy"];
 const REGIONS = ["All Australia", "NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"];
+
+// Demo: Anytime Fitness — strong urban gym corridors, one struggling suburb
+const DEMO_BEST = ["Bondi Beach NSW", "Surry Hills NSW", "South Yarra VIC", "Fitzroy VIC", "New Farm QLD"];
+const DEMO_WORST = ["Broken Hill NSW"];
 
 type Situation = "A" | "B" | "C" | null;
 
@@ -22,6 +26,8 @@ export default function UploadPage() {
   const router = useRouter();
 
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
+  const [categories, setCategories] = useState<string[]>(FALLBACK_CATEGORIES);
+  const [categoriesLoading, setCategoriesLoading] = useState(true);
   const [situation, setSituation] = useState<Situation>(null);
   const [bestLocations, setBestLocations] = useState<string[]>([]);
   const [worstLocations, setWorstLocations] = useState<string[]>([]);
@@ -30,7 +36,45 @@ export default function UploadPage() {
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
+  // Fetch available categories from the API
+  useEffect(() => {
+    api.categories()
+      .then((resp) => {
+        if (resp.categories.length > 0) {
+          setCategories(resp.categories.map((c) => c.name));
+        }
+      })
+      .catch(() => {
+        // Fallback to defaults on error
+      })
+      .finally(() => setCategoriesLoading(false));
+  }, []);
+
   const canSubmit = selectedCategory !== null && !loading;
+
+  async function runDemo() {
+    setError(null);
+    setLoading(true);
+    try {
+      const req: FingerprintRequest = {
+        category: "Gym & Fitness",
+        mode: "existing",
+        best_locations: DEMO_BEST,
+        worst_locations: DEMO_WORST,
+        region: "All Australia",
+      };
+      const result = await api.fingerprint(req);
+      sessionStorage.setItem("vantage_dna", JSON.stringify(result));
+      sessionStorage.setItem("vantage_category", "Gym & Fitness");
+      sessionStorage.setItem("vantage_region", "All Australia");
+      router.push("/dna");
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Demo failed — is the backend running?");
+    } finally {
+      setLoading(false);
+    }
+  }
+
 
   const handleSubmit = async () => {
     if (!selectedCategory) return;
@@ -183,16 +227,66 @@ export default function UploadPage() {
         </h1>
 
         <p
-          className="mb-12"
           style={{
             fontSize: 14,
             color: "#555566",
             lineHeight: 1.6,
             fontFamily: "var(--font-geist-sans)",
+            marginBottom: 8,
           }}
         >
-          Decode your franchise DNA. Find where to open next.
+          Upload your best locations. We decode what makes them work — then
+          scan 7,700+ Australian suburbs to find where that same pattern is
+          underserved and ready to capture.
         </p>
+
+        <div className="flex items-center gap-4 mb-12">
+          <button
+            onClick={runDemo}
+            style={{
+              fontSize: 12,
+              fontFamily: "var(--font-geist-mono)",
+              color: "#0D7377",
+              border: "1px solid rgba(13,115,119,0.35)",
+              borderRadius: 6,
+              padding: "6px 14px",
+              background: "transparent",
+              cursor: "pointer",
+              letterSpacing: "0.05em",
+              transition: "border-color 0.15s, background 0.15s",
+            }}
+            onMouseEnter={(e) => {
+              (e.currentTarget.style.background = "rgba(13,115,119,0.08)");
+              (e.currentTarget.style.borderColor = "rgba(13,115,119,0.6)");
+            }}
+            onMouseLeave={(e) => {
+              (e.currentTarget.style.background = "transparent");
+              (e.currentTarget.style.borderColor = "rgba(13,115,119,0.35)");
+            }}
+          >
+            ▶ Try demo — Gym & Fitness
+          </button>
+          <span style={{ fontSize: 11, color: "#3A3A4A" }}>
+            Pre-fills with real Anytime Fitness corridors
+          </span>
+        </div>
+
+        {/* ── How it works ─────────────────────────────────────── */}
+        <div className="flex gap-6 mb-10">
+          {[
+            { n: "01", title: "Decode your DNA", body: "Tell us your best locations. We extract the commercial fingerprint that makes them work." },
+            { n: "02", title: "Scan Australia", body: "We score 7,700+ suburbs against your fingerprint using 5 data signals." },
+            { n: "03", title: "Find the gap", body: "Discover suburbs where demand matches your pattern but competition hasn't caught up yet." },
+          ].map((step) => (
+            <div key={step.n} className="flex-1" style={{ borderTop: "1px solid #26262B", paddingTop: 12 }}>
+              <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: 9, color: "#0D7377", letterSpacing: "0.2em", marginBottom: 6 }}>
+                {step.n}
+              </p>
+              <p style={{ fontSize: 13, color: "#F0F0F2", fontWeight: 500, marginBottom: 4 }}>{step.title}</p>
+              <p style={{ fontSize: 11, color: "#555566", lineHeight: 1.55 }}>{step.body}</p>
+            </div>
+          ))}
+        </div>
 
         {/* Form card with teal left accent */}
         <div
@@ -222,25 +316,35 @@ export default function UploadPage() {
                 What type of business?
               </p>
               <div className="flex flex-wrap gap-2">
-                {CATEGORIES.map((c) => (
-                  <button
-                    key={c}
-                    onClick={() => setSelectedCategory(c)}
-                    style={{
-                      borderRadius: 4,
-                      fontSize: 13,
-                      fontFamily: "var(--font-geist-sans)",
-                      padding: "6px 14px",
-                      border: selectedCategory === c ? "none" : "1px solid #26262B",
-                      backgroundColor: selectedCategory === c ? "#0D7377" : "transparent",
-                      color: selectedCategory === c ? "#fff" : "#8B8B99",
-                      cursor: "pointer",
-                      transition: "all 0.15s ease",
-                    }}
-                  >
-                    {c}
-                  </button>
-                ))}
+                {categoriesLoading ? (
+                  [88, 72, 96, 80, 76].map((w, i) => (
+                    <div
+                      key={i}
+                      className="skeleton"
+                      style={{ width: w, height: 32, borderRadius: 4 }}
+                    />
+                  ))
+                ) : (
+                  categories.map((c) => (
+                    <button
+                      key={c}
+                      onClick={() => setSelectedCategory(c)}
+                      style={{
+                        borderRadius: 4,
+                        fontSize: 13,
+                        fontFamily: "var(--font-geist-sans)",
+                        padding: "6px 14px",
+                        border: selectedCategory === c ? "none" : "1px solid #26262B",
+                        backgroundColor: selectedCategory === c ? "#0D7377" : "transparent",
+                        color: selectedCategory === c ? "#fff" : "#8B8B99",
+                        cursor: "pointer",
+                        transition: "all 0.15s ease",
+                      }}
+                    >
+                      {c}
+                    </button>
+                  ))
+                )}
               </div>
             </div>
 

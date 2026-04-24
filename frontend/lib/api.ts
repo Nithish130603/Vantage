@@ -130,6 +130,49 @@ export const TIER_LABEL: Record<Tier, string> = {
 
 export const TIER_ORDER: Tier[] = ["BETTER_THAN_BEST", "PRIME", "STRONG", "WATCH", "AVOID"];
 
+export interface CategoryItem {
+  name: string;
+  venue_count: number;
+  display_order: number;
+}
+
+export interface CategoriesResponse {
+  categories: CategoryItem[];
+  total: number;
+}
+
+export interface ChatMessage {
+  role: "user" | "assistant";
+  content: string;
+}
+
+export interface ChatRequest {
+  question: string;
+  category?: string;
+  h3_r7?: string;
+  fingerprint_result?: Record<string, unknown>;
+  conversation_history: ChatMessage[];
+}
+
+export interface ChatResponse {
+  response: string;
+  conversation_history: ChatMessage[];
+}
+
+export interface CompareRequest {
+  category: string;
+  h3_r7_list: string[];
+  fingerprint_result?: Record<string, unknown>;
+}
+
+export interface CompareResponse {
+  category: string;
+  suburbs_compared: string[];
+  comparison_result: Record<string, string> | null;
+  final_output: string;
+  completed: string[];
+}
+
 async function json<T>(url: string, init?: RequestInit): Promise<T> {
   const res = await fetch(url, init);
   if (!res.ok) {
@@ -140,6 +183,10 @@ async function json<T>(url: string, init?: RequestInit): Promise<T> {
 }
 
 export const api = {
+  categories(): Promise<CategoriesResponse> {
+    return json<CategoriesResponse>(`${BASE}/categories`);
+  },
+
   fingerprint(req: FingerprintRequest): Promise<FingerprintResponse> {
     return json<FingerprintResponse>(`${BASE}/fingerprint`, {
       method: "POST",
@@ -158,15 +205,28 @@ export const api = {
       limit?: number;
     }
   ): Promise<ScanResponse> {
+    // Use POST when vectors are present to avoid URL length limits
+    const hasVectors = opts?.successVector?.length || opts?.failureVector?.length;
+    if (hasVectors) {
+      return json<ScanResponse>(`${BASE}/scan`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          category,
+          region: opts?.region ?? null,
+          client_mean_gold: opts?.clientMeanGold ?? null,
+          success_vector: opts?.successVector ?? null,
+          failure_vector: opts?.failureVector ?? null,
+          limit: opts?.limit ?? 200,
+        }),
+      });
+    }
+    // Simple GET for queries without large vectors
     const params = new URLSearchParams({ category });
     if (opts?.region) params.set("region", opts.region);
     if (opts?.limit != null) params.set("limit", String(opts.limit));
     if (opts?.clientMeanGold != null)
       params.set("client_mean_gold", String(opts.clientMeanGold));
-    if (opts?.successVector?.length)
-      params.set("success_vector", JSON.stringify(opts.successVector));
-    if (opts?.failureVector?.length)
-      params.set("failure_vector", JSON.stringify(opts.failureVector));
     return json<ScanResponse>(`${BASE}/scan?${params}`);
   },
 
@@ -194,6 +254,68 @@ export const api = {
     return json(
       `${BASE}/places/autocomplete?q=${encodeURIComponent(q)}&limit=${limit}`
     );
+  },
+
+  chat(req: ChatRequest): Promise<ChatResponse> {
+    return json<ChatResponse>(`${BASE}/agent/chat`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
+  },
+
+  chatStream(
+    req: ChatRequest,
+    onToken: (token: string) => void,
+    onDone: (response: string, history: ChatMessage[]) => void,
+    onError: (detail: string) => void,
+  ): () => void {
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(`${BASE}/agent/chat/stream`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(req),
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          const text = await res.text().catch(() => res.statusText);
+          onError(`API ${res.status}: ${text}`);
+          return;
+        }
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const event = JSON.parse(line.slice(6));
+              if (event.type === "token") onToken(event.content);
+              else if (event.type === "done") onDone(event.response, event.conversation_history);
+              else if (event.type === "error") onError(event.detail);
+            } catch {}
+          }
+        }
+      } catch (e) {
+        if ((e as Error).name !== "AbortError") onError(String(e));
+      }
+    })();
+    return () => controller.abort();
+  },
+
+  compare(req: CompareRequest): Promise<CompareResponse> {
+    return json<CompareResponse>(`${BASE}/agent/compare`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(req),
+    });
   },
 
   async downloadReport(

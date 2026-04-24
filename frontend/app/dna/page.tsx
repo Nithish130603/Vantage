@@ -11,12 +11,14 @@ import {
   type ScanResponse,
   TIER_COLOR,
 } from "@/lib/api";
-import { ArrowLeft, ArrowRight, AlertTriangle, CheckCircle, TrendingUp } from "lucide-react";
+import { ArrowLeft, ArrowRight, AlertTriangle, CheckCircle, TrendingUp, BookmarkCheck } from "lucide-react";
+import { supabase, supabaseEnabled } from "@/lib/supabase";
 
 const DnaMap = dynamic(() => import("@/components/map/DnaMap"), {
   ssr: false,
   loading: () => <div className="flex-1 bg-[#0D0D10] rounded-lg" />,
 });
+const SaveAnalysisModal = dynamic(() => import("@/components/ui/SaveAnalysisModal"), { ssr: false });
 
 // ── Animated score bar ────────────────────────────────────────────────────────
 
@@ -122,11 +124,21 @@ function DnaContent() {
   const [scanData, setScanData]   = useState<ScanResponse | null>(null);
   const [activeFilter, setActiveFilter] = useState("ALL");
   const [selected, setSelected]   = useState<EmbeddingPoint | null>(null);
+  const [showSave, setShowSave]   = useState(false);
+  const [isLoggedIn, setIsLoggedIn] = useState(false);
+  const [region, setRegion]       = useState("All Australia");
+
+  useEffect(() => {
+    if (!supabaseEnabled) return;
+    supabase.auth.getUser().then(({ data }) => setIsLoggedIn(!!data.user));
+  }, []);
 
   useEffect(() => {
     const stored = sessionStorage.getItem("vantage_dna");
     const cat    = sessionStorage.getItem("vantage_category") ?? "Gym & Fitness";
+    const rgn    = sessionStorage.getItem("vantage_region") ?? "All Australia";
     setCategory(cat);
+    setRegion(rgn);
     let parsedFp: FingerprintResponse | null = null;
     if (stored) {
       try { parsedFp = JSON.parse(stored) as FingerprintResponse; setFp(parsedFp); } catch { /* noop */ }
@@ -428,14 +440,37 @@ function DnaContent() {
                 {totalSuburbs > 0 ? `${totalSuburbs.toLocaleString()} suburbs scored` : ""}
               </span>
             </div>
-            <button
-              onClick={() => router.push(`/map?category=${encodeURIComponent(category)}`)}
-              className="w-full flex items-center justify-center gap-2 bg-[#0D7377] hover:bg-teal-600 text-white rounded-xl py-3.5 text-sm font-medium transition-all"
-            >
-              Explore opportunities
-              <ArrowRight size={15} />
-            </button>
+            <div className="flex gap-2">
+              {isLoggedIn && (
+                <button
+                  onClick={() => setShowSave(true)}
+                  className="flex items-center gap-1.5 px-4 py-3.5 rounded-xl text-sm font-medium transition-all shrink-0"
+                  style={{ border: "1px solid rgba(13,115,119,0.3)", color: "#0D7377" }}
+                >
+                  <BookmarkCheck size={14} />
+                  Save
+                </button>
+              )}
+              <button
+                onClick={() => router.push(`/map?category=${encodeURIComponent(category)}`)}
+                className="flex-1 flex items-center justify-center gap-2 bg-[#0D7377] hover:bg-teal-600 text-white rounded-xl py-3.5 text-sm font-medium transition-all"
+              >
+                Explore opportunities
+                <ArrowRight size={15} />
+              </button>
+            </div>
           </div>
+
+          {fp && (
+            <SaveAnalysisModal
+              open={showSave}
+              onClose={() => setShowSave(false)}
+              category={category}
+              region={region}
+              fingerprintResult={fp as unknown as Record<string, unknown>}
+              onSaved={() => router.push("/dashboard")}
+            />
+          )}
         </div>
       </motion.div>
 

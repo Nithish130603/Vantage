@@ -11,8 +11,8 @@ import numpy as np
 from sklearn.cluster import DBSCAN
 
 
-# ~500 m in degrees latitude (approximate, good enough for suburb level)
-_500M_DEG = 0.0045
+# ~500 m in radians for haversine (500 m / Earth radius 6371000 m)
+_500M_RAD = 500.0 / 6_371_000.0
 
 
 def competitive_pressure(
@@ -20,7 +20,7 @@ def competitive_pressure(
     venue_lons: list[float],
     target_category: str,
     venue_categories: list[str],
-    eps_deg: float = _500M_DEG,
+    eps_rad: float = _500M_RAD,
     min_samples: int = 3,
 ) -> float:
     """
@@ -30,7 +30,7 @@ def competitive_pressure(
     venue_lons        : longitude for every venue in the suburb cell
     target_category   : category label we're scoring for
     venue_categories  : category_label for every venue (parallel to lats/lons)
-    eps_deg           : DBSCAN epsilon in degrees (~500 m)
+    eps_rad           : DBSCAN epsilon in radians (~500 m)
     min_samples       : DBSCAN minimum cluster size
 
     Returns
@@ -54,8 +54,8 @@ def competitive_pressure(
         # a few scattered competitors — light pressure
         return max(0.0, 1.0 - n_competitors / 10.0)
 
-    xy = np.array(coords)
-    db = DBSCAN(eps=eps_deg, min_samples=min_samples, metric="euclidean").fit(xy)
+    xy = np.radians(np.array(coords))
+    db = DBSCAN(eps=eps_rad, min_samples=min_samples, metric="haversine").fit(xy)
     labels = db.labels_
 
     n_clustered = int(np.sum(labels >= 0))
@@ -71,6 +71,15 @@ def competitive_pressure_bulk(
     target_category: str,
 ) -> dict[str, float]:
     """
+    Compute competitive pressure for every H3 cell, using k-ring (k=1)
+    neighbors so that competitors near cell boundaries aren't invisible.
+
+    For each cell we:
+      1. Gather same-category venues from the cell + its 6 H3 neighbors
+      2. Run DBSCAN on the combined neighborhood
+      3. Only measure the clustered fraction for venues IN the target cell
+         (neighbors provide context but don't inflate the target's score)
+
     Parameters
     ----------
     rows            : list of (h3_r7, lat, lon, category_label)
@@ -80,17 +89,59 @@ def competitive_pressure_bulk(
     -------
     dict mapping h3_r7 → competitive_pressure score
     """
+    import h3
     from collections import defaultdict
 
-    cell_data: dict[str, dict] = defaultdict(lambda: {"lats": [], "lons": [], "cats": []})
+    # Build per-cell venue index
+    cell_data: dict[str, list[tuple[float, float, str]]] = defaultdict(list)
     for h3_r7, lat, lon, cat in rows:
-        cell_data[h3_r7]["lats"].append(lat)
-        cell_data[h3_r7]["lons"].append(lon)
-        cell_data[h3_r7]["cats"].append(cat)
+        cell_data[h3_r7].append((lat, lon, cat))
 
-    return {
-        cell: competitive_pressure(
-            d["lats"], d["lons"], target_category, d["cats"]
-        )
-        for cell, d in cell_data.items()
-    }
+    results: dict[str, float] = {}
+
+    for cell in cell_data:
+        # Gather venues from this cell + k-ring(1) neighbors
+        try:
+            neighborhood = h3.grid_disk(cell, 1)  # returns set of 7 cells
+        except Exception:
+            neighborhood = {cell}  # fallback if h3 fails
+
+        # Collect all same-category competitors in the neighborhood
+        all_coords: list[tuple[float, float]] = []
+        # Track which indices belong to the TARGET cell
+        target_indices: list[int] = []
+
+        for neighbor_cell in neighborhood:
+            for lat, lon, cat in cell_data.get(neighbor_cell, []):
+                if cat == target_category:
+                    idx = len(all_coords)
+                    all_coords.append((lat, lon))
+                    if neighbor_cell == cell:
+                        target_indices.append(idx)
+
+        n_target = len(target_indices)
+
+        # No competitors in or near this cell
+        if n_target == 0:
+            results[cell] = 1.0
+            continue
+
+        n_total = len(all_coords)
+
+        # Too few competitors for DBSCAN — use simple count heuristic
+        if n_total < 3:
+            results[cell] = max(0.0, 1.0 - n_target / 10.0)
+            continue
+
+        # Run DBSCAN on the full neighborhood
+        xy = np.radians(np.array(all_coords))
+        db = DBSCAN(eps=_500M_RAD, min_samples=3, metric="haversine").fit(xy)
+        labels = db.labels_
+
+        # Count how many of the TARGET cell's venues are in dense clusters
+        n_clustered_target = sum(1 for i in target_indices if labels[i] >= 0)
+        cluster_ratio = n_clustered_target / n_target
+
+        results[cell] = float(np.clip(1.0 - cluster_ratio, 0.0, 1.0))
+
+    return results

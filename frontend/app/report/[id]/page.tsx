@@ -24,6 +24,9 @@ import {
 } from "@/lib/api";
 import { ArrowLeft, Download, TrendingUp, AlertTriangle, CheckCircle, Info } from "lucide-react";
 import SignalCard from "@/components/charts/SignalCard";
+import dynamic from "next/dynamic";
+
+const ChatWidget = dynamic(() => import("@/components/ui/ChatWidget"), { ssr: false });
 
 // ── Tier helpers ──────────────────────────────────────────────────────────────
 
@@ -292,6 +295,14 @@ function ReportContent() {
     ss?.getItem("vantage_category") ??
     "Gym & Fitness";
 
+  const fingerprintResult = (() => {
+    try {
+      return JSON.parse(ss?.getItem("vantage_dna") ?? "null") as Record<string, unknown> | null;
+    } catch {
+      return null;
+    }
+  })();
+
   const [detail, setDetail] = useState<LocationDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
@@ -350,6 +361,11 @@ function ReportContent() {
 
   return (
     <main className="min-h-screen px-6 py-8 max-w-4xl mx-auto">
+      <ChatWidget
+        category={category}
+        h3_r7={id ?? undefined}
+        fingerprintResult={fingerprintResult ?? undefined}
+      />
       {/* Back */}
       <button
         onClick={() => router.push(`/map?category=${encodeURIComponent(category)}`)}

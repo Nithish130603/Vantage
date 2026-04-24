@@ -72,6 +72,10 @@ def ecosystem_diversity_bulk(
     Returns
     -------
     dict mapping h3_r7 → diversity score
+
+    Uses a global empirical ceiling (95th percentile of all cells' raw entropy)
+    instead of per-cell theoretical max. This prevents small cells with few
+    categories from getting inflated 100% scores.
     """
     from collections import defaultdict
 
@@ -80,7 +84,27 @@ def ecosystem_diversity_bulk(
         if cat:
             cell_cats[h3_r7].append(cat)
 
+    # Compute raw entropies first to find a global ceiling
+    raw_entropies: dict[str, float] = {}
+    for cell, cats in cell_cats.items():
+        counts = list(Counter(cats).values())
+        raw_entropies[cell] = shannon_entropy(counts)
+
+    if not raw_entropies:
+        return {}
+
+    # Use 95th percentile of observed entropies as the global ceiling
+    # This makes scores comparable across cells of different sizes
+    import numpy as np
+    entropy_vals = list(raw_entropies.values())
+    global_ceil = float(np.percentile(entropy_vals, 95)) if len(entropy_vals) >= 5 else max(entropy_vals)
+    global_ceil = max(global_ceil, entropy_floor + 0.1)  # avoid division by zero
+
     return {
-        cell: ecosystem_diversity(cats, entropy_floor=entropy_floor)
+        cell: ecosystem_diversity(
+            cats,
+            entropy_floor=entropy_floor,
+            entropy_ceil=global_ceil,
+        )
         for cell, cats in cell_cats.items()
     }

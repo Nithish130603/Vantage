@@ -62,6 +62,17 @@ class ScanResponse(BaseModel):
     tier_counts: dict[str, int]
 
 
+class ScanRequest(BaseModel):
+    """POST body for /scan — avoids URL length limits with large vectors."""
+    category: str
+    region: Optional[str] = None
+    client_mean_gold: Optional[float] = None
+    success_vector: Optional[list[float]] = None
+    failure_vector: Optional[list[float]] = None
+    limit: int = 200
+    min_score: float = 0.0
+
+
 def _tier_from_score(s: float, is_btb: bool = False) -> str:
     """
     Assign tier from composite score.
@@ -87,16 +98,15 @@ def _tier_from_score(s: float, is_btb: bool = False) -> str:
     return "AVOID"
 
 
-@router.get("/scan", response_model=ScanResponse)
-def scan_suburbs(
-    category: str = Query(...),
-    region: Optional[str] = Query(None),
-    client_mean_gold: Optional[float] = Query(None),
-    success_vector: Optional[str] = Query(None),   # JSON array
-    failure_vector: Optional[str] = Query(None),   # JSON array
-    limit: int = Query(200, ge=1, le=500),          # max results *per tier*
-    min_score: float = Query(0.0),
-):
+def _scan_impl(
+    category: str,
+    region: Optional[str],
+    client_mean_gold: Optional[float],
+    sv: np.ndarray | None,
+    fv: np.ndarray | None,
+    limit: int,
+    min_score: float,
+) -> ScanResponse:
     con = state["get_con"]()
     suburb_matrix = state["suburb_matrix"]
     cell_id_to_idx = state["cell_id_to_idx"]
@@ -141,9 +151,6 @@ def scan_suburbs(
     query += " ORDER BY ss.composite_score DESC"
 
     rows = con.execute(query, params).fetchall()
-
-    sv = np.array(json.loads(success_vector), dtype=np.float32) if success_vector else None
-    fv = np.array(json.loads(failure_vector), dtype=np.float32) if failure_vector else None
 
     suburbs: list[SuburbResult] = []
     for r in rows:
@@ -278,4 +285,31 @@ def scan_suburbs(
         prime_count=0,
         total=true_total,
         tier_counts=tier_counts,
+    )
+
+
+@router.get("/scan", response_model=ScanResponse)
+def scan_suburbs_get(
+    category: str = Query(...),
+    region: Optional[str] = Query(None),
+    client_mean_gold: Optional[float] = Query(None),
+    success_vector: Optional[str] = Query(None),   # JSON array
+    failure_vector: Optional[str] = Query(None),   # JSON array
+    limit: int = Query(200, ge=1, le=500),
+    min_score: float = Query(0.0),
+):
+    """GET /scan — for simple queries or backward compatibility."""
+    sv = np.array(json.loads(success_vector), dtype=np.float32) if success_vector else None
+    fv = np.array(json.loads(failure_vector), dtype=np.float32) if failure_vector else None
+    return _scan_impl(category, region, client_mean_gold, sv, fv, limit, min_score)
+
+
+@router.post("/scan", response_model=ScanResponse)
+def scan_suburbs_post(body: ScanRequest):
+    """POST /scan — use when success_vector/failure_vector are large."""
+    sv = np.array(body.success_vector, dtype=np.float32) if body.success_vector else None
+    fv = np.array(body.failure_vector, dtype=np.float32) if body.failure_vector else None
+    return _scan_impl(
+        body.category, body.region, body.client_mean_gold,
+        sv, fv, body.limit, body.min_score,
     )
