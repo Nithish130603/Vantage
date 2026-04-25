@@ -30,7 +30,7 @@ export default function Dashboard() {
 
   async function handleSignOut() {
     if (supabaseEnabled) await supabase.auth.signOut();
-    router.push("/");
+    router.push("/setup");
   }
 
   async function handleDelete(id: string) {
@@ -49,7 +49,7 @@ export default function Dashboard() {
     <main className="min-h-screen px-6 py-12" style={{ backgroundColor: "#0A0A0B" }}>
       <AuthModal
         open={showAuth && !user}
-        onClose={() => { if (!user) router.push("/"); }}
+        onClose={() => { if (!user) router.push("/setup"); }}
         onSuccess={() => {
           setShowAuth(false);
           if (!supabaseEnabled) return;
@@ -77,7 +77,7 @@ export default function Dashboard() {
 
           <div className="flex items-center gap-3">
             <button
-              onClick={() => router.push("/")}
+              onClick={() => router.push("/setup")}
               className="flex items-center gap-1.5 px-4 py-2 rounded-lg text-xs font-medium transition-colors"
               style={{ background: "#0D7377", color: "#fff" }}
             >
@@ -109,7 +109,7 @@ export default function Dashboard() {
             <BarChart3 size={32} className="text-[#3A3A4A] mx-auto mb-4" />
             <p className="text-sm text-[#555566] mb-5">No saved analyses yet.</p>
             <button
-              onClick={() => router.push("/")}
+              onClick={() => router.push("/setup")}
               className="px-5 py-2.5 rounded-lg text-sm font-medium"
               style={{ background: "#0D7377", color: "#fff" }}
             >

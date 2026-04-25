@@ -187,7 +187,7 @@ export default function OpportunityMap({ results, selected, onSelect, filter, sa
 
     const map = new mapboxgl.Map({
       container: containerRef.current,
-      style: "mapbox://styles/mapbox/dark-v11",
+      style: "mapbox://styles/mapbox/satellite-streets-v12",
       center: [133.8, -27.5],
       zoom: 4,
       attributionControl: false,

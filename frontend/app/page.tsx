@@ -1,635 +1,472 @@
 "use client";
 
-import { useState, useEffect } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-import { motion, AnimatePresence } from "framer-motion";
-import { api, type FingerprintRequest } from "@/lib/api";
-import SuburbTagInput from "@/components/ui/SuburbTagInput";
+import { motion } from "framer-motion";
 
-const FALLBACK_CATEGORIES = ["Gym & Fitness", "Café", "Pharmacy"];
-const REGIONS = ["All Australia", "NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"];
-
-// Demo: Anytime Fitness — strong urban gym corridors, one struggling suburb
-const DEMO_BEST = ["Bondi Beach NSW", "Surry Hills NSW", "South Yarra VIC", "Fitzroy VIC", "New Farm QLD"];
-const DEMO_WORST = ["Broken Hill NSW"];
-
-type Situation = "A" | "B" | "C" | null;
-
-function parseLocations(raw: string): string[] {
-  return raw
-    .split(/[\n,]+/)
-    .map((s) => s.trim())
-    .filter(Boolean);
-}
-
-export default function UploadPage() {
+export default function LandingPage() {
   const router = useRouter();
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+  const [coords, setCoords] = useState({ lat: "−33.8688", lon: "151.2093" });
 
-  const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
-  const [categories, setCategories] = useState<string[]>(FALLBACK_CATEGORIES);
-  const [categoriesLoading, setCategoriesLoading] = useState(true);
-  const [situation, setSituation] = useState<Situation>(null);
-  const [bestLocations, setBestLocations] = useState<string[]>([]);
-  const [worstLocations, setWorstLocations] = useState<string[]>([]);
-  const [overseasRaw, setOverseasRaw] = useState("");
-  const [selectedRegion, setSelectedRegion] = useState("All Australia");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-
-  // Fetch available categories from the API
   useEffect(() => {
-    api.categories()
-      .then((resp) => {
-        if (resp.categories.length > 0) {
-          setCategories(resp.categories.map((c) => c.name));
-        }
-      })
-      .catch(() => {
-        // Fallback to defaults on error
-      })
-      .finally(() => setCategoriesLoading(false));
+    const AU_COORDS = [
+      { lat: "−33.8688", lon: "151.2093" },
+      { lat: "−37.8136", lon: "144.9631" },
+      { lat: "−27.4698", lon: "153.0251" },
+      { lat: "−31.9505", lon: "115.8605" },
+      { lat: "−34.9285", lon: "138.6007" },
+    ];
+    let i = 0;
+    const id = setInterval(() => {
+      i = (i + 1) % AU_COORDS.length;
+      setCoords(AU_COORDS[i]);
+    }, 2800);
+    return () => clearInterval(id);
   }, []);
 
-  const canSubmit = selectedCategory !== null && !loading;
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
 
-  async function runDemo() {
-    setError(null);
-    setLoading(true);
-    try {
-      const req: FingerprintRequest = {
-        category: "Gym & Fitness",
-        mode: "existing",
-        best_locations: DEMO_BEST,
-        worst_locations: DEMO_WORST,
-        region: "All Australia",
-      };
-      const result = await api.fingerprint(req);
-      sessionStorage.setItem("vantage_dna", JSON.stringify(result));
-      sessionStorage.setItem("vantage_category", "Gym & Fitness");
-      sessionStorage.setItem("vantage_region", "All Australia");
-      router.push("/dna");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "Demo failed — is the backend running?");
-    } finally {
-      setLoading(false);
+    let raf: number;
+    let t = 0;
+
+    // Stars — generated once
+    const STARS: { x: number; y: number; r: number; op: number; twinkle: number }[] = [];
+
+    function resize() {
+      if (!canvas) return;
+      canvas.width = window.innerWidth;
+      canvas.height = window.innerHeight;
+      // Regenerate stars on resize
+      STARS.length = 0;
+      for (let i = 0; i < 320; i++) {
+        STARS.push({
+          x: Math.random() * canvas.width,
+          y: Math.random() * canvas.height,
+          r: Math.random() * 1.1 + 0.1,
+          op: Math.random() * 0.55 + 0.05,
+          twinkle: Math.random() * Math.PI * 2,
+        });
+      }
     }
-  }
+    resize();
+    window.addEventListener("resize", resize);
 
+    const CX = () => canvas!.width / 2;
+    const CY = () => canvas!.height / 2;
+    const R  = () => Math.min(canvas!.width, canvas!.height) * 0.36;
 
-  const handleSubmit = async () => {
-    if (!selectedCategory) return;
-    setError(null);
-    setLoading(true);
+    // Network nodes fixed on sphere surface
+    const NODES = [
+      { phi: 0.75, theta: 0.5  },
+      { phi: 1.20, theta: 2.1  },
+      { phi: 0.50, theta: 1.3  },
+      { phi: 1.55, theta: 0.9  },
+      { phi: 0.90, theta: 3.5  },
+      { phi: 1.10, theta: 4.2  },
+      { phi: 0.40, theta: 5.1  },
+      { phi: 1.40, theta: 5.8  },
+      { phi: 0.70, theta: 2.7  },
+      { phi: 1.30, theta: 1.6  },
+      { phi: 0.60, theta: 0.2  },
+      { phi: 1.00, theta: 3.0  },
+    ];
+    const CONNECTIONS = [[0,2],[2,4],[1,3],[3,5],[6,8],[7,9],[0,6],[4,9],[10,2],[11,5],[1,10],[7,11]];
 
-    try {
-      const mode =
-        situation === "A" ? "existing" : situation === "C" ? "overseas" : "fresh";
-
-      const best_locations =
-        situation === "A"
-          ? bestLocations
-          : situation === "C"
-          ? parseLocations(overseasRaw)
-          : [];
-
-      const worst_locations = situation === "A" ? worstLocations : [];
-
-      const req: FingerprintRequest = {
-        category: selectedCategory,
-        mode,
-        best_locations,
-        worst_locations,
-        region: selectedRegion,
-      };
-
-      const result = await api.fingerprint(req);
-      sessionStorage.setItem("vantage_dna", JSON.stringify(result));
-      sessionStorage.setItem("vantage_category", selectedCategory);
-      sessionStorage.setItem("vantage_region", selectedRegion);
-      router.push("/dna");
-    } catch (e) {
-      setError(e instanceof Error ? e.message : "API error — is the backend running?");
-    } finally {
-      setLoading(false);
+    function project(phi: number, theta: number, r: number, cx: number, cy: number) {
+      const x = cx + r * Math.sin(phi) * Math.cos(theta);
+      const y = cy + r * Math.cos(phi);
+      const z = Math.sin(phi) * Math.sin(theta);
+      return { x, y, z };
     }
-  };
+
+    // Draw a great-circle arc between two projected points (curves over sphere)
+    function drawArc(
+      c: CanvasRenderingContext2D,
+      ax: number, ay: number,
+      bx: number, by: number,
+      r: number,
+      color: string,
+      width: number
+    ) {
+      const mx = (ax + bx) / 2;
+      const my = (ay + by) / 2 - r * 0.10;
+      c.beginPath();
+      c.moveTo(ax, ay);
+      c.quadraticCurveTo(mx, my, bx, by);
+      c.strokeStyle = color;
+      c.lineWidth = width;
+      c.stroke();
+    }
+
+    function drawFrame() {
+      if (!canvas || !ctx) return;
+      const cx = CX(), cy = CY(), r = R();
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+
+      // ── 1. STARFIELD ──────────────────────────────────────────────────
+      for (const s of STARS) {
+        const tw = 0.5 + 0.5 * Math.sin(s.twinkle + t * 0.018);
+        ctx.beginPath();
+        ctx.arc(s.x, s.y, s.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(200,220,240,${s.op * tw})`;
+        ctx.fill();
+      }
+
+      // ── 2. GLOBE ATMOSPHERE (outer glow layers) ───────────────────────
+      // Deep halo
+      const atmo = ctx.createRadialGradient(cx, cy, r * 0.85, cx, cy, r * 1.55);
+      atmo.addColorStop(0,   "rgba(13,115,119,0.0)");
+      atmo.addColorStop(0.4, "rgba(13,115,119,0.07)");
+      atmo.addColorStop(0.75,"rgba(14,80,100,0.04)");
+      atmo.addColorStop(1,   "transparent");
+      ctx.fillStyle = atmo;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 1.55, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Rim light — bright cyan ring at globe edge
+      const rim = ctx.createRadialGradient(cx, cy, r * 0.92, cx, cy, r * 1.05);
+      rim.addColorStop(0, "transparent");
+      rim.addColorStop(0.7,"rgba(0,210,230,0.07)");
+      rim.addColorStop(1,  "rgba(0,210,230,0.18)");
+      ctx.fillStyle = rim;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r * 1.05, 0, Math.PI * 2);
+      ctx.fill();
+
+      // Specular highlight (top-left light source)
+      const spec = ctx.createRadialGradient(cx - r*0.28, cy - r*0.32, 0, cx - r*0.28, cy - r*0.32, r * 0.65);
+      spec.addColorStop(0,   "rgba(120,210,220,0.09)");
+      spec.addColorStop(0.5, "rgba(40,160,180,0.03)");
+      spec.addColorStop(1,   "transparent");
+      ctx.fillStyle = spec;
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.fill();
+
+      // ── 3. GLOBE BODY (clipping region) ──────────────────────────────
+      ctx.save();
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.clip();
+
+      // Dark fill
+      const bodyGrd = ctx.createRadialGradient(cx - r*0.2, cy - r*0.2, 0, cx, cy, r);
+      bodyGrd.addColorStop(0, "rgba(6,20,28,0.92)");
+      bodyGrd.addColorStop(1, "rgba(2,8,14,0.97)");
+      ctx.fillStyle = bodyGrd;
+      ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
+
+      // ── LATITUDE LINES (bright, visible grid) ─────────────────────────
+      const LAT_RINGS = 9; // more rings = denser grid
+      for (let i = 1; i < LAT_RINGS; i++) {
+        const angle = (i / LAT_RINGS) * Math.PI;
+        const latR = r * Math.sin(angle);
+        const latY = cy + r * Math.cos(angle);
+        const isEquator = i === Math.floor(LAT_RINGS / 2);
+        ctx.beginPath();
+        ctx.ellipse(cx, latY, latR, latR * 0.15, 0, 0, Math.PI * 2);
+        ctx.strokeStyle = isEquator
+          ? "rgba(0,220,240,0.30)"   // equator brighter cyan
+          : "rgba(60,180,200,0.13)";
+        ctx.lineWidth = isEquator ? 1.0 : 0.6;
+        ctx.stroke();
+      }
+
+      // ── LONGITUDE LINES (rotating, bright) ────────────────────────────
+      const LON_LINES = 12;
+      for (let i = 0; i < LON_LINES; i++) {
+        const angle = (i / LON_LINES) * Math.PI + t * 0.003;
+        const xRadius = r * Math.abs(Math.cos(angle));
+        const isPrime = i === 0;
+        ctx.beginPath();
+        ctx.ellipse(cx, cy, xRadius, r, 0, 0, Math.PI * 2);
+        ctx.strokeStyle = isPrime
+          ? "rgba(0,220,240,0.22)"
+          : "rgba(60,180,200,0.09)";
+        ctx.lineWidth = isPrime ? 0.9 : 0.5;
+        ctx.stroke();
+      }
+
+      ctx.restore(); // end globe clip
+
+      // ── 4. GLOBE OUTLINE ──────────────────────────────────────────────
+      ctx.beginPath();
+      ctx.arc(cx, cy, r, 0, Math.PI * 2);
+      ctx.strokeStyle = "rgba(0,210,230,0.45)";
+      ctx.lineWidth = 1.2;
+      ctx.stroke();
+
+      // ── 5. NETWORK NODES + ARCS ───────────────────────────────────────
+      const projected = NODES.map(({ phi, theta }) =>
+        project(phi, theta + t * 0.005, r, cx, cy)
+      );
+
+      // Arcs
+      for (const [a, b] of CONNECTIONS) {
+        const na = projected[a], nb = projected[b];
+        if (na.z < 0 || nb.z < 0) continue;
+        const depth = (na.z + nb.z) * 0.5;
+        const pulse = 0.5 + 0.5 * Math.sin(t * 0.04 + a);
+        drawArc(
+          ctx, na.x, na.y, nb.x, nb.y, r,
+          `rgba(0,210,230,${depth * 0.45 * pulse})`,
+          0.8
+        );
+      }
+
+      // Nodes
+      for (const { x, y, z } of projected) {
+        if (z < 0.02) continue;
+        const depth  = (z + 0.4) * 0.7;
+        const pulse  = 1 + 0.25 * Math.sin(t * 0.08 + x * 0.01);
+
+        // Outer glow ring
+        const glow = ctx.createRadialGradient(x, y, 0, x, y, 14 * pulse);
+        glow.addColorStop(0,   `rgba(0,210,230,${depth * 0.25})`);
+        glow.addColorStop(1,   "transparent");
+        ctx.fillStyle = glow;
+        ctx.beginPath();
+        ctx.arc(x, y, 14 * pulse, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Mid ring
+        ctx.beginPath();
+        ctx.arc(x, y, 5 * pulse, 0, Math.PI * 2);
+        ctx.strokeStyle = `rgba(0,220,240,${depth * 0.6})`;
+        ctx.lineWidth = 0.8;
+        ctx.stroke();
+
+        // Core
+        ctx.beginPath();
+        ctx.arc(x, y, 2, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(100,240,255,${depth})`;
+        ctx.fill();
+      }
+
+      // ── 6. SHOOTING STAR (occasional) ─────────────────────────────────
+      if (t % 280 < 60) {
+        const progress = (t % 280) / 60;
+        const sx = canvas.width * 0.15 + progress * canvas.width * 0.25;
+        const sy = canvas.height * 0.12 + progress * canvas.height * 0.08;
+        const len = 80 * Math.sin(progress * Math.PI);
+        const grad = ctx.createLinearGradient(sx - len, sy - len * 0.4, sx, sy);
+        grad.addColorStop(0, "transparent");
+        grad.addColorStop(1, `rgba(180,240,255,${0.7 * Math.sin(progress * Math.PI)})`);
+        ctx.beginPath();
+        ctx.moveTo(sx - len, sy - len * 0.4);
+        ctx.lineTo(sx, sy);
+        ctx.strokeStyle = grad;
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+      }
+
+      t++;
+      raf = requestAnimationFrame(drawFrame);
+    }
+
+    drawFrame();
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", resize);
+    };
+  }, []);
 
   return (
     <main
-      className="relative min-h-screen flex flex-col items-center justify-center px-6 py-20 overflow-hidden"
-      style={{ backgroundColor: "#0A0A0B" }}
+      className="relative min-h-screen overflow-hidden flex flex-col"
+      style={{ backgroundColor: "#020509", fontFamily: "var(--font-geist-mono)" }}
     >
-      {/* ── Atmospheric background layer ───────────────────────────── */}
-      <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
-        {/* Dot grid */}
-        <svg className="absolute inset-0 w-full h-full">
-          <defs>
-            <pattern id="dotgrid" x="0" y="0" width="38" height="38" patternUnits="userSpaceOnUse">
-              <circle cx="19" cy="19" r="1" fill="#0D7377" />
-            </pattern>
-          </defs>
-          <rect width="100%" height="100%" fill="url(#dotgrid)" opacity="0.07" />
-        </svg>
+      {/* Canvas */}
+      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
 
-        {/* Radial teal glow — upper right */}
-        <div style={{
-          position: "absolute", top: "-15%", right: "-8%",
-          width: "55%", height: "70%",
-          background: "radial-gradient(ellipse, rgba(13,115,119,0.10) 0%, transparent 68%)",
-        }} />
+      {/* Edge vignette — keeps focus on globe centre */}
+      <div
+        className="absolute inset-0 pointer-events-none"
+        style={{
+          background: "radial-gradient(ellipse 70% 75% at 50% 50%, transparent 35%, rgba(2,5,9,0.75) 100%)",
+        }}
+      />
 
-        {/* Radial teal glow — lower left */}
-        <div style={{
-          position: "absolute", bottom: "-10%", left: "-5%",
-          width: "38%", height: "50%",
-          background: "radial-gradient(ellipse, rgba(13,115,119,0.06) 0%, transparent 70%)",
-        }} />
-
-        {/* Bottom vignette */}
-        <div style={{
-          position: "absolute", bottom: 0, left: 0, right: 0, height: "28%",
-          background: "linear-gradient(to top, rgba(10,10,11,0.60), transparent)",
-        }} />
-
-        {/* Scattered location nodes */}
-        {([
-          { x: "6%",  y: "13%", core: 5, ring: 14, op: 0.18 },
-          { x: "88%", y: "9%",  core: 7, ring: 20, op: 0.22 },
-          { x: "78%", y: "40%", core: 4, ring: 12, op: 0.16 },
-          { x: "93%", y: "65%", core: 6, ring: 17, op: 0.19 },
-          { x: "11%", y: "72%", core: 3, ring: 10, op: 0.14 },
-          { x: "60%", y: "88%", core: 5, ring: 14, op: 0.15 },
-          { x: "83%", y: "82%", core: 3, ring: 9,  op: 0.12 },
-          { x: "42%", y: "6%",  core: 4, ring: 11, op: 0.13 },
-        ] as { x: string; y: string; core: number; ring: number; op: number }[]).map((pin, i) => (
-          <div key={i} style={{ position: "absolute", left: pin.x, top: pin.y, transform: "translate(-50%,-50%)" }}>
-            <div style={{
-              position: "absolute", left: "50%", top: "50%",
-              width: pin.ring * 2, height: pin.ring * 2, borderRadius: "50%",
-              border: "1px solid rgba(13,115,119,0.55)",
-              transform: "translate(-50%,-50%)", opacity: pin.op,
-            }} />
-            <div style={{
-              position: "absolute", left: "50%", top: "50%",
-              width: pin.core * 2, height: pin.core * 2, borderRadius: "50%",
-              backgroundColor: "#0D7377", opacity: pin.op + 0.08,
-              transform: "translate(-50%,-50%)",
-            }} />
-          </div>
-        ))}
-
-        {/* Faint coordinate labels */}
-        <span style={{ position: "absolute", bottom: 18, right: 22, fontSize: 9, fontFamily: "monospace", color: "#0D7377", opacity: 0.18, letterSpacing: "0.1em" }}>
-          −33.8688, 151.2093
-        </span>
-        <span style={{ position: "absolute", top: 18, left: 22, fontSize: 9, fontFamily: "monospace", color: "#0D7377", opacity: 0.18, letterSpacing: "0.1em" }}>
-          −27.4698, 153.0251
-        </span>
-        <span style={{ position: "absolute", top: 18, right: 22, fontSize: 9, fontFamily: "monospace", color: "#0D7377", opacity: 0.12, letterSpacing: "0.1em" }}>
-          AU · H3 r7
-        </span>
+      {/* ── TOP BAR ──────────────────────────────────────────────────── */}
+      <div className="relative z-10 flex items-center justify-between px-8 py-6">
+        <p className="text-[11px] tracking-[0.3em] text-white/40 uppercase">Vantage</p>
+        <div className="flex items-center gap-2.5">
+          <span className="text-[10px] tracking-[0.2em] text-[#0D9BA0] uppercase">System Online</span>
+          <motion.span
+            className="w-1.5 h-1.5 rounded-full"
+            style={{ backgroundColor: "#0D9BA0" }}
+            animate={{ opacity: [1, 0.3, 1] }}
+            transition={{ duration: 1.6, repeat: Infinity }}
+          />
+        </div>
       </div>
 
-      <motion.div
-        initial={{ opacity: 0, y: 24 }}
-        animate={{ opacity: 1, y: 0 }}
-        transition={{ duration: 0.5, ease: [0.22, 1, 0.36, 1] }}
-        className="w-full max-w-xl relative"
-        style={{ zIndex: 1 }}
+      {/* ── SIDE LABELS ──────────────────────────────────────────────── */}
+      <div
+        className="absolute left-7 top-1/2 z-10"
+        style={{ writingMode: "vertical-rl", transform: "translateY(-50%) rotate(180deg)" }}
       >
-        {/* Eyebrow */}
-        <p
-          className="mb-5"
-          style={{
-            fontFamily: "var(--font-geist-mono)",
-            fontSize: 10,
-            letterSpacing: "0.25em",
-            textTransform: "uppercase",
-            color: "#0D7377",
-          }}
-        >
-          Vantage · Location Intelligence
-        </p>
+        <span className="text-[8px] tracking-[0.3em] text-white/12 uppercase">Scanning Area 404</span>
+      </div>
+      <div
+        className="absolute right-7 top-1/2 z-10"
+        style={{ writingMode: "vertical-rl" }}
+      >
+        <span className="text-[8px] tracking-[0.3em] text-white/12 uppercase">Neural Link Established</span>
+      </div>
 
-        {/* Main heading */}
-        <h1
-          className="mb-3 font-light leading-[1.08]"
-          style={{
-            fontFamily: "var(--font-fraunces)",
-            fontSize: "clamp(48px, 6vw, 68px)",
-            color: "#F0F0F2",
-            fontWeight: 300,
-          }}
-        >
-          Find your next
-          <br />
-          location.
-        </h1>
+      {/* ── CENTRE CONTENT ───────────────────────────────────────────── */}
+      <div className="relative z-10 flex-1 flex flex-col items-center justify-center text-center px-6">
 
-        <p
-          style={{
-            fontSize: 14,
-            color: "#555566",
-            lineHeight: 1.6,
-            fontFamily: "var(--font-geist-sans)",
-            marginBottom: 8,
-          }}
+        {/* Tagline chip */}
+        <motion.div
+          initial={{ opacity: 0, y: 16 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.9, delay: 0.3, ease: [0.22, 1, 0.36, 1] }}
+          className="mb-7"
         >
-          Upload your best locations. We decode what makes them work — then
-          scan 7,700+ Australian suburbs to find where that same pattern is
-          underserved and ready to capture.
-        </p>
-
-        <div className="flex items-center gap-4 mb-12">
-          <button
-            onClick={runDemo}
+          <span
+            className="inline-block text-[10px] tracking-[0.24em] uppercase px-5 py-2"
             style={{
-              fontSize: 12,
-              fontFamily: "var(--font-geist-mono)",
-              color: "#0D7377",
-              border: "1px solid rgba(13,115,119,0.35)",
-              borderRadius: 6,
-              padding: "6px 14px",
-              background: "transparent",
-              cursor: "pointer",
-              letterSpacing: "0.05em",
-              transition: "border-color 0.15s, background 0.15s",
-            }}
-            onMouseEnter={(e) => {
-              (e.currentTarget.style.background = "rgba(13,115,119,0.08)");
-              (e.currentTarget.style.borderColor = "rgba(13,115,119,0.6)");
-            }}
-            onMouseLeave={(e) => {
-              (e.currentTarget.style.background = "transparent");
-              (e.currentTarget.style.borderColor = "rgba(13,115,119,0.35)");
+              color: "#0DC5CC",
+              border: "1px solid rgba(13,197,204,0.3)",
+              background: "rgba(13,197,204,0.04)",
+              letterSpacing: "0.24em",
             }}
           >
-            ▶ Try demo — Gym & Fitness
-          </button>
-          <span style={{ fontSize: 11, color: "#3A3A4A" }}>
-            Pre-fills with real Anytime Fitness corridors
+            Don&apos;t guess where your next store goes. Know.
           </span>
-        </div>
+        </motion.div>
 
-        {/* ── How it works ─────────────────────────────────────── */}
-        <div className="flex gap-6 mb-10">
-          {[
-            { n: "01", title: "Decode your DNA", body: "Tell us your best locations. We extract the commercial fingerprint that makes them work." },
-            { n: "02", title: "Scan Australia", body: "We score 7,700+ suburbs against your fingerprint using 5 data signals." },
-            { n: "03", title: "Find the gap", body: "Discover suburbs where demand matches your pattern but competition hasn't caught up yet." },
-          ].map((step) => (
-            <div key={step.n} className="flex-1" style={{ borderTop: "1px solid #26262B", paddingTop: 12 }}>
-              <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: 9, color: "#0D7377", letterSpacing: "0.2em", marginBottom: 6 }}>
-                {step.n}
-              </p>
-              <p style={{ fontSize: 13, color: "#F0F0F2", fontWeight: 500, marginBottom: 4 }}>{step.title}</p>
-              <p style={{ fontSize: 11, color: "#555566", lineHeight: 1.55 }}>{step.body}</p>
-            </div>
-          ))}
-        </div>
-
-        {/* Form card with teal left accent */}
-        <div
-          className="relative rounded-xl overflow-hidden"
-          style={{ border: "1px solid #26262B" }}
+        {/* Hero wordmark — dimmed, letting the globe breathe through */}
+        <motion.h1
+          initial={{ opacity: 0, y: 28 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 1.0, delay: 0.5, ease: [0.22, 1, 0.36, 1] }}
+          className="font-black uppercase leading-none mb-3 select-none"
+          style={{
+            fontSize: "clamp(68px, 13vw, 148px)",
+            letterSpacing: "-0.025em",
+            fontFamily: "var(--font-geist-sans)",
+            // Ghosted: low fill with a bright teal outline glow
+            color: "rgba(220,235,240,0.18)",
+            textShadow: [
+              "0 0 120px rgba(0,200,220,0.22)",
+              "0 0  40px rgba(0,200,220,0.10)",
+              "0 2px  0px rgba(0,0,0,0.9)",
+            ].join(", "),
+            WebkitTextStroke: "1px rgba(0,200,220,0.35)",
+          }}
         >
-          {/* Teal vertical bar */}
-          <div
-            className="absolute inset-y-0 left-0 w-[3px]"
-            style={{ backgroundColor: "#0D7377" }}
-          />
+          VANTAGE
+        </motion.h1>
 
-          <div className="pl-7 pr-6 py-8 space-y-9">
+        {/* Subtle descriptor */}
+        <motion.p
+          initial={{ opacity: 0 }}
+          animate={{ opacity: 1 }}
+          transition={{ duration: 0.8, delay: 0.85 }}
+          className="text-[10px] tracking-[0.22em] uppercase mb-10"
+          style={{ color: "rgba(100,160,180,0.45)" }}
+        >
+          Location Intelligence · Australia
+        </motion.p>
 
-            {/* ── Step 1 — Category ───────────────────────────────── */}
-            <div>
-              <p
-                className="mb-4"
-                style={{
-                  fontFamily: "var(--font-geist-mono)",
-                  fontSize: 10,
-                  letterSpacing: "0.2em",
-                  textTransform: "uppercase",
-                  color: "#0D7377",
-                }}
-              >
-                What type of business?
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {categoriesLoading ? (
-                  [88, 72, 96, 80, 76].map((w, i) => (
-                    <div
-                      key={i}
-                      className="skeleton"
-                      style={{ width: w, height: 32, borderRadius: 4 }}
-                    />
-                  ))
-                ) : (
-                  categories.map((c) => (
-                    <button
-                      key={c}
-                      onClick={() => setSelectedCategory(c)}
-                      style={{
-                        borderRadius: 4,
-                        fontSize: 13,
-                        fontFamily: "var(--font-geist-sans)",
-                        padding: "6px 14px",
-                        border: selectedCategory === c ? "none" : "1px solid #26262B",
-                        backgroundColor: selectedCategory === c ? "#0D7377" : "transparent",
-                        color: selectedCategory === c ? "#fff" : "#8B8B99",
-                        cursor: "pointer",
-                        transition: "all 0.15s ease",
-                      }}
-                    >
-                      {c}
-                    </button>
-                  ))
-                )}
-              </div>
-            </div>
+        {/* CTA */}
+        <motion.button
+          initial={{ opacity: 0, y: 10 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.7, delay: 1.0 }}
+          onClick={() => router.push("/setup")}
+          className="group relative flex items-center gap-3 px-9 py-4 text-[11px] tracking-[0.25em] uppercase overflow-hidden"
+          style={{
+            border: "1px solid rgba(13,197,204,0.45)",
+            background: "rgba(13,197,204,0.05)",
+            color: "#0DC5CC",
+          }}
+          onMouseEnter={(e) => {
+            e.currentTarget.style.background = "rgba(13,197,204,0.12)";
+            e.currentTarget.style.borderColor = "rgba(13,197,204,0.8)";
+            e.currentTarget.style.boxShadow = "0 0 32px rgba(13,197,204,0.15), inset 0 0 20px rgba(13,197,204,0.04)";
+          }}
+          onMouseLeave={(e) => {
+            e.currentTarget.style.background = "rgba(13,197,204,0.05)";
+            e.currentTarget.style.borderColor = "rgba(13,197,204,0.45)";
+            e.currentTarget.style.boxShadow = "none";
+          }}
+        >
+          Enter Terminal
+          <svg width="12" height="12" viewBox="0 0 12 12" fill="none">
+            <path d="M1 11L11 1M11 1H4M11 1V8" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" strokeLinejoin="round"/>
+          </svg>
+        </motion.button>
+      </div>
 
-            {/* ── Step 2 — Situation ───────────────────────────────── */}
-            <div>
-              <p
-                className="mb-4"
-                style={{
-                  fontFamily: "var(--font-geist-mono)",
-                  fontSize: 10,
-                  letterSpacing: "0.2em",
-                  textTransform: "uppercase",
-                  color: "#555566",
-                }}
-              >
-                Your situation
-              </p>
-              <div className="space-y-2.5">
-
-                {/* Card A */}
-                <div
-                  onClick={() => setSituation("A")}
-                  style={{
-                    borderRadius: 8,
-                    border: situation === "A" ? "none" : "1px solid #26262B",
-                    borderLeft: situation === "A" ? "2px solid #0D7377" : "1px solid #26262B",
-                    backgroundColor: situation === "A" ? "rgba(13,115,119,0.06)" : "transparent",
-                    padding: "14px 16px",
-                    cursor: "pointer",
-                    transition: "all 0.15s ease",
-                  }}
-                >
-                  <p style={{ fontSize: 13, color: "#F0F0F2", fontWeight: 500, marginBottom: 2 }}>
-                    I have existing locations
-                  </p>
-                  <p style={{ fontSize: 12, color: "#555566" }}>
-                    We&apos;ll build your franchise DNA from your stores
-                  </p>
-
-                  <AnimatePresence>
-                    {situation === "A" && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={{ opacity: 0, height: 0 }}
-                        transition={{ duration: 0.22 }}
-                        className="overflow-hidden"
-                      >
-                        <div className="mt-5 space-y-4" onClick={(e) => e.stopPropagation()}>
-                          <div>
-                            <p style={{ fontSize: 11, color: "#8B8B99", marginBottom: 6 }}>
-                              Your best performing locations
-                            </p>
-                            <SuburbTagInput
-                              value={bestLocations}
-                              onChange={setBestLocations}
-                              placeholder="Type a suburb…"
-                              maxTags={20}
-                            />
-                          </div>
-                          <div>
-                            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
-                              <p style={{ fontSize: 11, color: "#8B8B99" }}>
-                                Struggling or closed locations
-                              </p>
-                              <span
-                                style={{
-                                  fontSize: 9,
-                                  fontFamily: "var(--font-geist-mono)",
-                                  letterSpacing: "0.05em",
-                                  padding: "2px 6px",
-                                  borderRadius: 3,
-                                  border: "1px solid rgba(13,115,119,0.3)",
-                                  color: "#0D7377",
-                                }}
-                              >
-                                Optional
-                              </span>
-                            </div>
-                            <SuburbTagInput
-                              value={worstLocations}
-                              onChange={setWorstLocations}
-                              placeholder="Type a suburb…"
-                              maxTags={10}
-                              variant="danger"
-                            />
-                          </div>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-
-                {/* Card B */}
-                <div
-                  onClick={() => setSituation("B")}
-                  style={{
-                    borderRadius: 8,
-                    border: situation === "B" ? "none" : "1px solid #26262B",
-                    borderLeft: situation === "B" ? "2px solid #0D7377" : "1px solid #26262B",
-                    backgroundColor: situation === "B" ? "rgba(13,115,119,0.06)" : "transparent",
-                    padding: "14px 16px",
-                    cursor: "pointer",
-                    transition: "all 0.15s ease",
-                  }}
-                >
-                  <p style={{ fontSize: 13, color: "#F0F0F2", fontWeight: 500, marginBottom: 2 }}>
-                    Starting fresh
-                  </p>
-                  <p style={{ fontSize: 12, color: "#555566" }}>
-                    We&apos;ll use data from successful{" "}
-                    {selectedCategory ? selectedCategory.toLowerCase() : "businesses"} across
-                    Australia
-                  </p>
-                </div>
-
-                {/* Card C */}
-                <div
-                  onClick={() => setSituation("C")}
-                  style={{
-                    borderRadius: 8,
-                    border: situation === "C" ? "none" : "1px solid #26262B",
-                    borderLeft: situation === "C" ? "2px solid #0D7377" : "1px solid #26262B",
-                    backgroundColor: situation === "C" ? "rgba(13,115,119,0.06)" : "transparent",
-                    padding: "14px 16px",
-                    cursor: "pointer",
-                    transition: "all 0.15s ease",
-                  }}
-                >
-                  <p style={{ fontSize: 13, color: "#F0F0F2", fontWeight: 500, marginBottom: 2 }}>
-                    Entering Australia from overseas
-                  </p>
-                  <p style={{ fontSize: 12, color: "#555566" }}>
-                    We&apos;ll translate your success pattern to Australian equivalents
-                  </p>
-
-                  <AnimatePresence>
-                    {situation === "C" && (
-                      <motion.div
-                        initial={{ opacity: 0, height: 0 }}
-                        animate={{ opacity: 1, height: "auto" }}
-                        exit={{ opacity: 0, height: 0 }}
-                        transition={{ duration: 0.22 }}
-                        className="overflow-hidden"
-                      >
-                        <div className="mt-5" onClick={(e) => e.stopPropagation()}>
-                          <textarea
-                            rows={3}
-                            value={overseasRaw}
-                            onChange={(e) => setOverseasRaw(e.target.value)}
-                            placeholder="Manhattan NY, Brooklyn NY, Chicago IL"
-                            style={{
-                              width: "100%",
-                              backgroundColor: "#0A0A0B",
-                              border: "1px solid #26262B",
-                              borderRadius: 6,
-                              padding: "10px 12px",
-                              fontSize: 13,
-                              color: "#F0F0F2",
-                              fontFamily: "var(--font-geist-sans)",
-                              resize: "none",
-                              outline: "none",
-                            }}
-                            onFocus={(e) => (e.target.style.borderColor = "#0D7377")}
-                            onBlur={(e) => (e.target.style.borderColor = "#26262B")}
-                          />
-                          <p style={{ fontSize: 10, color: "#3A3A4A", marginTop: 4 }}>
-                            Optional — your home country locations
-                          </p>
-                        </div>
-                      </motion.div>
-                    )}
-                  </AnimatePresence>
-                </div>
-
-              </div>
-            </div>
-
-            {/* ── Step 3 — Region ─────────────────────────────────── */}
-            <div>
-              <p
-                className="mb-4"
-                style={{
-                  fontFamily: "var(--font-geist-mono)",
-                  fontSize: 10,
-                  letterSpacing: "0.2em",
-                  textTransform: "uppercase",
-                  color: "#555566",
-                }}
-              >
-                Region
-              </p>
-              <div className="flex flex-wrap gap-2">
-                {REGIONS.map((r) => (
-                  <button
-                    key={r}
-                    onClick={() => setSelectedRegion(r)}
-                    style={{
-                      borderRadius: 4,
-                      fontSize: 12,
-                      fontFamily: "var(--font-geist-mono)",
-                      padding: "5px 11px",
-                      border: selectedRegion === r ? "none" : "1px solid #26262B",
-                      backgroundColor: selectedRegion === r ? "#0D7377" : "transparent",
-                      color: selectedRegion === r ? "#fff" : "#555566",
-                      cursor: "pointer",
-                      transition: "all 0.15s ease",
-                    }}
-                  >
-                    {r}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Error */}
-            {error && (
-              <p
-                style={{
-                  fontSize: 12,
-                  color: "#f87171",
-                  backgroundColor: "rgba(127,29,29,0.15)",
-                  border: "1px solid rgba(153,27,27,0.3)",
-                  borderRadius: 6,
-                  padding: "8px 12px",
-                }}
-              >
-                {error}
-              </p>
-            )}
-
-            {/* CTA */}
-            <button
-              onClick={handleSubmit}
-              disabled={!canSubmit}
-              style={{
-                width: "100%",
-                height: 48,
-                borderRadius: 8,
-                border: "none",
-                backgroundColor: canSubmit ? "#0D7377" : "#1A2A2A",
-                color: canSubmit ? "#fff" : "#3A5050",
-                fontSize: 14,
-                fontFamily: "var(--font-geist-sans)",
-                fontWeight: 500,
-                cursor: canSubmit ? "pointer" : "not-allowed",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                gap: 8,
-                transition: "background-color 0.2s ease, color 0.2s ease",
-              }}
-              onMouseEnter={(e) => {
-                if (canSubmit) (e.currentTarget.style.backgroundColor = "#0f8a8f");
-              }}
-              onMouseLeave={(e) => {
-                if (canSubmit) (e.currentTarget.style.backgroundColor = "#0D7377");
-              }}
-            >
-              {loading ? (
-                <>
-                  <span
-                    style={{
-                      width: 14,
-                      height: 14,
-                      border: "2px solid rgba(255,255,255,0.3)",
-                      borderTopColor: "#fff",
-                      borderRadius: "50%",
-                      display: "inline-block",
-                      animation: "spin 0.7s linear infinite",
-                    }}
-                  />
-                  Analysing…
-                </>
-              ) : (
-                "Analyse locations →"
-              )}
-            </button>
-
+      {/* ── BOTTOM STATUS BAR ─────────────────────────────────────────── */}
+      <motion.div
+        initial={{ opacity: 0 }}
+        animate={{ opacity: 1 }}
+        transition={{ duration: 0.8, delay: 1.2 }}
+        className="relative z-10 flex items-end justify-between px-8 py-6"
+      >
+        <div>
+          <p className="text-[8px] tracking-[0.22em] text-white/20 uppercase mb-1.5">Global Node Connectivity</p>
+          <div className="flex items-center gap-2">
+            <div className="w-10 h-px" style={{ background: "linear-gradient(to right, rgba(13,197,204,0.7), transparent)" }} />
+            <p className="text-[9px] tracking-[0.15em] text-[#0DC5CC]/70">99.98% Ops Stable</p>
           </div>
+        </div>
+
+        <div className="text-center">
+          <p className="text-[8px] tracking-[0.22em] text-white/20 uppercase mb-1.5">Current Lat / Long</p>
+          <motion.p
+            key={coords.lat}
+            initial={{ opacity: 0, y: 4 }}
+            animate={{ opacity: 1, y: 0 }}
+            transition={{ duration: 0.5 }}
+            className="text-[9px] tracking-[0.1em]"
+            style={{ color: "rgba(150,210,220,0.45)" }}
+          >
+            {coords.lat}° S &nbsp;·&nbsp; {coords.lon}° E
+          </motion.p>
+        </div>
+
+        <div className="text-right">
+          <p className="text-[8px] tracking-[0.22em] text-white/20 uppercase mb-1.5">System Core</p>
+          <p className="text-[9px] tracking-[0.1em]" style={{ color: "rgba(150,210,220,0.45)" }}>V.04.2-ALPHA</p>
         </div>
       </motion.div>
 
-      <style>{`@keyframes spin { to { transform: rotate(360deg); } }`}</style>
+      {/* ── SCAN LINE ─────────────────────────────────────────────────── */}
+      <motion.div
+        className="absolute inset-x-0 h-px pointer-events-none z-20"
+        style={{ background: "linear-gradient(to right, transparent 0%, rgba(0,210,230,0.35) 40%, rgba(0,210,230,0.6) 50%, rgba(0,210,230,0.35) 60%, transparent 100%)" }}
+        animate={{ top: ["8%", "92%", "8%"] }}
+        transition={{ duration: 9, repeat: Infinity, ease: "linear" }}
+      />
+
+      {/* ── CORNER BRACKETS ───────────────────────────────────────────── */}
+      {[
+        { top: 16, left: 16 },
+        { top: 16, right: 16 },
+        { bottom: 16, left: 16 },
+        { bottom: 16, right: 16 },
+      ].map((pos, i) => (
+        <div key={i} className="absolute z-10 pointer-events-none" style={{ ...pos, width: 20, height: 20 }}>
+          <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
+            {i === 0 && <><path d="M0 10V0H10" stroke="rgba(13,197,204,0.25)" strokeWidth="1"/></>}
+            {i === 1 && <><path d="M20 10V0H10" stroke="rgba(13,197,204,0.25)" strokeWidth="1"/></>}
+            {i === 2 && <><path d="M0 10V20H10" stroke="rgba(13,197,204,0.25)" strokeWidth="1"/></>}
+            {i === 3 && <><path d="M20 10V20H10" stroke="rgba(13,197,204,0.25)" strokeWidth="1"/></>}
+          </svg>
+        </div>
+      ))}
     </main>
   );
-
 }

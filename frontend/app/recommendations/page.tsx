@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState, useCallback, useMemo, Suspense } from "react";
+import { useEffect, useState, useRef, useCallback, useMemo, Suspense } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import {
@@ -11,17 +11,33 @@ import {
   TIER_LABEL,
   type Tier,
 } from "@/lib/api";
-import { ArrowRight, Bookmark, BookmarkCheck, ChevronRight } from "lucide-react";
+import { ArrowLeft, Info, Bookmark, BookmarkCheck, ChevronRight } from "lucide-react";
 import dynamic from "next/dynamic";
 
 const OpportunityMap = dynamic(
   () => import("@/components/map/OpportunityMap"),
   { ssr: false, loading: () => <div style={{ flex: 1, background: "#020509" }} /> }
 );
-const ChatWidget   = dynamic(() => import("@/components/ui/ChatWidget"),   { ssr: false });
+const ChatWidget    = dynamic(() => import("@/components/ui/ChatWidget"),    { ssr: false });
 const CompareDrawer = dynamic(() => import("@/components/ui/CompareDrawer"), { ssr: false });
 
 type Filter = Tier | "ALL" | "SAVED" | "EXACT_MATCH";
+
+// ── Constants ─────────────────────────────────────────────────────────────────
+
+const TIER_DEF: Record<string, string> = {
+  BETTER_THAN_BEST: "Locations that outperform your current best stores — high-potential, non-obvious expansion targets.",
+  STRONG:  "Strong commercial DNA match. These suburbs share the same ecosystem as your best locations. Score ≥ 60.",
+  WATCH:   "Moderate fit. Growing competition or slowing market — worth monitoring. Score 40–59.",
+  AVOID:   "Elevated risk. High closure rates, saturation, or weak commercial fundamentals. Score < 40.",
+};
+
+const TIER_SCORE_RANGE: Record<string, string> = {
+  BETTER_THAN_BEST: "Score ≥ 60 + beats your benchmark",
+  STRONG: "Score ≥ 60",
+  WATCH:  "Score 40–59",
+  AVOID:  "Score < 40",
+};
 
 // ── localStorage helpers ──────────────────────────────────────────────────────
 
@@ -34,16 +50,16 @@ function persistSaved(s: Set<string>) {
   localStorage.setItem("vantage_saved", JSON.stringify([...s]));
 }
 
-// ── Sidebar nav items ─────────────────────────────────────────────────────────
+// ── Sidebar nav items (Recommendations active) ────────────────────────────────
 
 const NAV_ITEMS = [
   { label: "Dashboard", active: false, path: "/setup",
     icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><rect x="1" y="1" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2"/><rect x="8.5" y="1" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2"/><rect x="1" y="8.5" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2"/><rect x="8.5" y="8.5" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2"/></svg> },
   { label: "Insights", active: false, path: "/dna",
     icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><polyline points="1,11 5,6 8,9 14,3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/><polyline points="10,3 14,3 14,7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
-  { label: "Exact Matches", active: true, path: "/map",
+  { label: "Exact Matches", active: false, path: "/map",
     icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.2"/><line x1="10" y1="10" x2="14" y2="14" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/><line x1="4.5" y1="6.5" x2="8.5" y2="6.5" stroke="currentColor" strokeWidth="1.1"/><line x1="6.5" y1="4.5" x2="6.5" y2="8.5" stroke="currentColor" strokeWidth="1.1"/></svg> },
-  { label: "Recommendations", active: false, path: "/recommendations",
+  { label: "Recommendations", active: true, path: "/recommendations",
     icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><polygon points="7.5,1 9.5,5.5 14.5,6 11,9.5 12,14.5 7.5,12 3,14.5 4,9.5 0.5,6 5.5,5.5" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round"/></svg> },
   { label: "Avoid Zones", active: false, path: "/map",
     icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><circle cx="7.5" cy="7.5" r="6" stroke="currentColor" strokeWidth="1.2"/><line x1="3" y1="3" x2="12" y2="12" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg> },
@@ -155,18 +171,165 @@ function VantageSidebar({ open, onToggle }: { open: boolean; onToggle: () => voi
   );
 }
 
+// ── Opportunity distribution bar ──────────────────────────────────────────────
+
+function OpportunityDistribution({ tierCounts, totalScored, onFilterSelect, activeFilter }: {
+  tierCounts: Record<Tier, number>; totalScored: number;
+  onFilterSelect: (f: Filter) => void; activeFilter: Filter;
+}) {
+  const [hoveredTier, setHoveredTier] = useState<Tier | null>(null);
+  const tooltipRef = useRef<HTMLDivElement>(null);
+  const tiers: Tier[] = ["BETTER_THAN_BEST", "STRONG", "WATCH", "AVOID"];
+  const visibleTiers  = tiers.filter((t) => (tierCounts[t] ?? 0) > 0);
+
+  return (
+    <div style={{ display: "flex", flexDirection: "column", gap: 8, minWidth: 260, maxWidth: 340 }}>
+      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between" }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 6 }}>
+          <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: 9, letterSpacing: "0.18em", color: "rgba(0,210,230,0.5)", textTransform: "uppercase", fontWeight: 700 }}>
+            Opportunity Distribution
+          </p>
+          <div style={{ position: "relative" }} className="group">
+            <Info size={10} style={{ color: "rgba(255,255,255,0.2)", cursor: "help" }} />
+            <div style={{ position: "absolute", bottom: "100%", right: 0, marginBottom: 6, display: "none", zIndex: 50, width: 220, background: "rgba(4,8,16,0.96)", border: "1px solid rgba(0,210,230,0.12)", borderRadius: 8, padding: 10, fontSize: 10, color: "rgba(180,190,205,0.7)", lineHeight: 1.6, boxShadow: "0 8px 32px rgba(0,0,0,0.5)" }}
+              className="group-hover:block">
+              Breakdown of scored suburbs by category. Click a segment to filter.
+            </div>
+          </div>
+        </div>
+        <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: 9, color: "rgba(255,255,255,0.2)" }}>
+          {totalScored.toLocaleString()} suburbs
+        </p>
+      </div>
+      <div style={{ position: "relative" }}>
+        <div style={{ display: "flex", width: "100%", height: 10, borderRadius: 99, overflow: "hidden", background: "rgba(255,255,255,0.04)" }}>
+          {visibleTiers.map((t) => {
+            const pct = ((tierCounts[t] ?? 0) / totalScored) * 100;
+            return (
+              <button key={t} onClick={() => onFilterSelect(t)}
+                onMouseEnter={() => setHoveredTier(t)} onMouseLeave={() => setHoveredTier(null)}
+                style={{ width: `${pct}%`, backgroundColor: TIER_COLOR[t], opacity: activeFilter === "ALL" || activeFilter === t ? 1 : 0.3, transition: "opacity 0.2s", cursor: "pointer" }}
+                className="h-full focus:outline-none"
+              />
+            );
+          })}
+        </div>
+        {hoveredTier && (
+          <div ref={tooltipRef}
+            style={{ position: "absolute", bottom: "100%", right: 0, marginBottom: 8, zIndex: 50, minWidth: 200, background: "rgba(4,8,16,0.96)", border: "1px solid rgba(0,210,230,0.12)", borderRadius: 10, padding: 12, boxShadow: "0 8px 32px rgba(0,0,0,0.5)", pointerEvents: "none" }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 6 }}>
+              <span style={{ width: 8, height: 8, borderRadius: "50%", backgroundColor: TIER_COLOR[hoveredTier], display: "inline-block" }} />
+              <p style={{ fontSize: 12, fontWeight: 600, color: "#F0F0F2" }}>{TIER_LABEL[hoveredTier]}</p>
+            </div>
+            <p style={{ fontSize: 11, color: "rgba(170,180,195,0.7)", lineHeight: 1.6, marginBottom: 8 }}>{TIER_DEF[hoveredTier]}</p>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 8, borderTop: "1px solid rgba(0,210,230,0.07)", paddingTop: 8 }}>
+              <span style={{ fontFamily: "var(--font-fraunces)", fontSize: 18, fontWeight: 300, color: "#F0F0F2" }}>{(tierCounts[hoveredTier] ?? 0).toLocaleString()}</span>
+              <span style={{ fontSize: 10, color: "rgba(255,255,255,0.25)" }}>suburbs · {(((tierCounts[hoveredTier] ?? 0) / totalScored) * 100).toFixed(1)}%</span>
+            </div>
+            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: 9, color: "rgba(0,210,230,0.4)", marginTop: 4 }}>{TIER_SCORE_RANGE[hoveredTier]}</p>
+          </div>
+        )}
+      </div>
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+        {visibleTiers.map((t) => {
+          const count = tierCounts[t] ?? 0;
+          const pct   = ((count / totalScored) * 100).toFixed(0);
+          return (
+            <button key={t} onClick={() => onFilterSelect(t)}
+              style={{ display: "flex", alignItems: "center", gap: 5, opacity: activeFilter === "ALL" || activeFilter === t ? 1 : 0.35, background: "none", border: "none", cursor: "pointer", padding: 0 }}>
+              {t === "BETTER_THAN_BEST"
+                ? <span style={{ color: TIER_COLOR[t], fontSize: 9 }}>★</span>
+                : <span style={{ width: 6, height: 6, borderRadius: "50%", backgroundColor: TIER_COLOR[t], display: "inline-block" }} />}
+              <span style={{ fontFamily: "var(--font-geist-mono)", fontSize: 9, color: "rgba(180,190,205,0.7)", whiteSpace: "nowrap", fontWeight: 500 }}>
+                {t === "BETTER_THAN_BEST" ? "Opportunity" : TIER_LABEL[t]}
+                <span style={{ color: "rgba(255,255,255,0.25)", marginLeft: 4 }}>{count.toLocaleString()} ({pct}%)</span>
+              </span>
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Empty states ──────────────────────────────────────────────────────────────
+
+function BtbEmptyState({ isFreshMode }: { isFreshMode: boolean }) {
+  return (
+    <div style={{ margin: 16, padding: 16, borderRadius: 12, border: "1px solid rgba(232,197,71,0.2)", background: "rgba(232,197,71,0.04)" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+        <span style={{ fontSize: 16, lineHeight: 1, marginTop: 1 }}>⭐</span>
+        <div>
+          <p style={{ fontSize: 12, fontWeight: 600, color: "#E8C547", marginBottom: 5 }}>No "Better Than Best" opportunities found</p>
+          <p style={{ fontSize: 11, color: "rgba(160,170,185,0.7)", lineHeight: 1.6 }}>
+            {isFreshMode
+              ? "Add your existing locations on Screen 1 to unlock Better Than Best opportunities."
+              : "No suburbs currently outperform your benchmark in this region. Try All Australia."}
+          </p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function SavedEmptyState() {
+  return (
+    <div style={{ margin: 16, padding: 16, borderRadius: 12, border: "1px solid rgba(255,255,255,0.06)", background: "rgba(255,255,255,0.02)" }}>
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
+        <Bookmark size={14} style={{ color: "rgba(140,155,175,0.5)", marginTop: 1, flexShrink: 0 }} />
+        <div>
+          <p style={{ fontSize: 12, fontWeight: 600, color: "rgba(140,155,175,0.7)", marginBottom: 4 }}>No saved locations yet</p>
+          <p style={{ fontSize: 11, color: "rgba(120,130,150,0.55)", lineHeight: 1.6 }}>Click the bookmark icon on any result to save it here.</p>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Filter pills ──────────────────────────────────────────────────────────────
+
+function FilterPills({ filter, setFilter, tierCounts, totalScored, btbCount, savedCount }: {
+  filter: Filter; setFilter: (f: Filter) => void;
+  tierCounts: Record<Tier, number>; totalScored: number; btbCount: number; savedCount: number;
+}) {
+  const pills: { key: Filter; label: string; count: number; color: string }[] = [
+    { key: "ALL",              label: "All",                count: totalScored,              color: "rgba(180,190,205,0.7)" },
+    { key: "BETTER_THAN_BEST", label: "⭐ Better Than Best", count: btbCount,                color: TIER_COLOR.BETTER_THAN_BEST },
+    { key: "STRONG",           label: "Strong",             count: tierCounts.STRONG ?? 0,   color: TIER_COLOR.STRONG },
+    { key: "WATCH",            label: "Watch",              count: tierCounts.WATCH ?? 0,    color: TIER_COLOR.WATCH },
+    { key: "AVOID",            label: "Avoid",              count: tierCounts.AVOID ?? 0,    color: TIER_COLOR.AVOID },
+    ...(savedCount > 0 ? [{ key: "SAVED" as Filter, label: "Saved", count: savedCount, color: "#E8C547" }] : []),
+  ];
+  return (
+    <div style={{ display: "flex", gap: 6, marginTop: 10, flexWrap: "wrap" }}>
+      {pills.map((p) => {
+        const isActive = filter === p.key;
+        return (
+          <button key={p.key} onClick={() => setFilter(p.key)}
+            style={{
+              fontSize: 10, fontFamily: "var(--font-geist-mono)", padding: "4px 10px", borderRadius: 99,
+              border: isActive ? "none" : "1px solid rgba(255,255,255,0.07)",
+              backgroundColor: isActive ? `${p.color}22` : "transparent",
+              color: isActive ? p.color : "rgba(140,155,175,0.55)",
+              cursor: "pointer", fontWeight: isActive ? 600 : 500, transition: "all 0.15s",
+            }}>
+            {p.label} <span style={{ opacity: 0.6, marginLeft: 3 }}>{p.count.toLocaleString()}</span>
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
 // ── Bookmark button ───────────────────────────────────────────────────────────
 
 function BookmarkBtn({ saved, onToggle }: { saved: boolean; onToggle: () => void }) {
   return (
-    <button
-      onClick={(e) => { e.stopPropagation(); onToggle(); }}
-      title={saved ? "Remove" : "Save location"}
+    <button onClick={(e) => { e.stopPropagation(); onToggle(); }}
       className="shrink-0 transition-colors p-0.5 rounded"
       style={{ color: saved ? "#E8C547" : "#3A3A4A" }}
       onMouseEnter={(e) => { if (!saved) (e.currentTarget as HTMLElement).style.color = "#8B8B99"; }}
-      onMouseLeave={(e) => { if (!saved) (e.currentTarget as HTMLElement).style.color = "#3A3A4A"; }}
-    >
+      onMouseLeave={(e) => { if (!saved) (e.currentTarget as HTMLElement).style.color = "#3A3A4A"; }}>
       {saved ? <BookmarkCheck size={13} fill="#E8C547" /> : <Bookmark size={13} />}
     </button>
   );
@@ -174,7 +337,7 @@ function BookmarkBtn({ saved, onToggle }: { saved: boolean; onToggle: () => void
 
 // ── Main content ──────────────────────────────────────────────────────────────
 
-function MapContent() {
+function RecommendationsContent() {
   const router = useRouter();
   const params = useSearchParams();
 
@@ -182,7 +345,10 @@ function MapContent() {
   const [selected, setSelected]       = useState<SuburbResult | null>(null);
   const [loading, setLoading]         = useState(true);
   const [error, setError]             = useState<string | null>(null);
+  const [btbCount, setBtbCount]       = useState(0);
   const [totalScored, setTotalScored] = useState(0);
+  const [filter, setFilter]           = useState<Filter>("ALL");
+  const [tierCounts, setTierCounts]   = useState<Record<Tier, number>>({ BETTER_THAN_BEST: 0, PRIME: 0, STRONG: 0, WATCH: 0, AVOID: 0 });
   const [savedH3s, setSavedH3s]       = useState<Set<string>>(loadSaved);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
@@ -204,40 +370,45 @@ function MapContent() {
     catch { return {} as Partial<FingerprintResponse>; }
   })();
 
+  const isFreshMode    = (dna.mode === "fresh") || ((dna.n_locations ?? 0) === 0);
   const failureSet     = new Set(dna.failure_h3s ?? []);
   const clientMeanGold = dna.gold_standard_match;
 
-  // Exact matches — top ~15% by fingerprint similarity
   const exactMatchH3s = useMemo(() => {
     if (!results.length) return new Set<string>();
-    const sorted    = [...results].sort((a, b) => b.score_fingerprint - a.score_fingerprint);
-    const cutoffIdx = Math.max(1, Math.floor(sorted.length * 0.15));
+    const sorted      = [...results].sort((a, b) => b.score_fingerprint - a.score_fingerprint);
+    const cutoffIdx   = Math.max(1, Math.floor(sorted.length * 0.15));
     const cutoffScore = Math.max(sorted[cutoffIdx - 1]?.score_fingerprint ?? 0, 0.50);
     return new Set(sorted.filter((r) => r.score_fingerprint >= cutoffScore).map((r) => r.h3_r7));
   }, [results]);
 
   useEffect(() => {
     api.scan(category, {
-      region,
-      clientMeanGold,
+      region, clientMeanGold,
       successVector: dna.success_vector ?? undefined,
       failureVector: dna.failure_vector ?? undefined,
       limit: 200,
     })
       .then((resp) => {
         setResults(resp.suburbs);
+        setBtbCount(resp.better_than_best_count);
         setTotalScored(resp.total);
+        if (resp.tier_counts) setTierCounts(resp.tier_counts as Record<Tier, number>);
       })
       .catch((e) => setError(e instanceof Error ? e.message : "Failed to load"))
       .finally(() => setLoading(false));
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Exact match results sorted by fingerprint score
-  const exactResults = useMemo(
-    () => [...results].sort((a, b) => b.score_fingerprint - a.score_fingerprint).filter((r) => exactMatchH3s.has(r.h3_r7)),
-    [results, exactMatchH3s]
-  );
+  const visibleResults =
+    filter === "ALL"              ? results
+    : filter === "SAVED"          ? results.filter((r) => savedH3s.has(r.h3_r7))
+    : filter === "BETTER_THAN_BEST" ? results.filter((r) => r.tier === "BETTER_THAN_BEST")
+    : filter === "EXACT_MATCH"    ? results
+    : results.filter((r) => r.tier === filter);
+
+  const showBtbEmpty   = !loading && !error && filter === "BETTER_THAN_BEST" && visibleResults.length === 0;
+  const showSavedEmpty = !loading && !error && filter === "SAVED" && visibleResults.length === 0;
 
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", backgroundColor: "#020509" }}>
@@ -250,27 +421,26 @@ function MapContent() {
 
         {/* Header */}
         <div style={{ padding: "12px 20px", borderBottom: "1px solid rgba(0,210,230,0.1)", background: "rgba(2,5,9,0.98)", display: "flex", alignItems: "center", gap: 16, flexShrink: 0 }}>
+          <button onClick={() => router.push(`/map?category=${encodeURIComponent(category)}`)}
+            style={{ display: "flex", alignItems: "center", gap: 6, background: "none", border: "none", cursor: "pointer", color: "rgba(255,255,255,0.3)", fontSize: 13, flexShrink: 0, padding: 0 }}>
+            <ArrowLeft size={14} />
+          </button>
           <div style={{ flex: 1 }}>
             <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: 9, letterSpacing: "0.26em", textTransform: "uppercase", color: "rgba(0,210,230,0.6)", marginBottom: 4, fontWeight: 700 }}>
-              Step 3 of 3 · Exact Matches
+              Step 3 of 3 · Recommendations
             </p>
             <p style={{ fontFamily: "var(--font-fraunces)", fontSize: 20, fontWeight: 300, color: "#F0F0F2", lineHeight: 1.2 }}>
-              {category} — Exact Matches
+              Recommendations for {category}
             </p>
           </div>
-          {!loading && (
-            <div style={{ textAlign: "right", flexShrink: 0 }}>
-              <p style={{ fontFamily: "var(--font-fraunces)", fontSize: 32, fontWeight: 300, color: "rgba(0,210,230,0.88)", lineHeight: 1 }}>
-                {exactResults.length}
-              </p>
-              <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: 9, color: "rgba(255,255,255,0.22)", letterSpacing: "0.15em", fontWeight: 600 }}>
-                EXACT MATCHES
-              </p>
-            </div>
+          {totalScored > 0 && (
+            <OpportunityDistribution
+              tierCounts={tierCounts}
+              totalScored={totalScored}
+              onFilterSelect={setFilter}
+              activeFilter={filter}
+            />
           )}
-          <p style={{ fontSize: 11, color: "rgba(255,255,255,0.2)", flexShrink: 0 }}>
-            {totalScored > 0 ? `${totalScored.toLocaleString()} suburbs scored · ${region}` : region}
-          </p>
         </div>
 
         {/* Split panel */}
@@ -278,21 +448,26 @@ function MapContent() {
 
           {/* Results list */}
           <div style={{ width: 300, flexShrink: 0, display: "flex", flexDirection: "column", borderRight: "1px solid rgba(0,210,230,0.1)", background: "rgba(2,5,9,0.6)" }}>
-
-            {/* List header */}
             <div style={{ padding: "14px 16px 10px", borderBottom: "1px solid rgba(0,210,230,0.07)", flexShrink: 0 }}>
               <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: 9, letterSpacing: "0.22em", textTransform: "uppercase", color: "rgba(0,210,230,0.55)", marginBottom: 4, fontWeight: 700 }}>
-                Locations
+                {filter === "SAVED" ? "Saved Locations" : "Opportunities"}
               </p>
               <p style={{ fontFamily: "var(--font-fraunces)", fontSize: 22, fontWeight: 300, color: loading ? "rgba(0,210,230,0.5)" : "rgba(0,210,230,0.88)", lineHeight: 1 }}>
-                {loading ? "Loading…" : `${exactResults.length} results`}
+                {loading ? "Loading…" : filter === "SAVED" ? `${savedH3s.size} saved` : `${visibleResults.length.toLocaleString()} results`}
               </p>
-              <p style={{ fontSize: 11, color: "rgba(180,190,205,0.55)", marginTop: 4, fontWeight: 400 }}>
-                Suburbs most similar to your best locations
+              <p style={{ fontSize: 11, color: "rgba(180,190,205,0.5)", marginTop: 4 }}>
+                {filter === "SAVED" ? "Your shortlisted candidates" : `Top results of ${totalScored.toLocaleString()} scored suburbs.`}
               </p>
+              {!loading && btbCount > 0 && filter !== "SAVED" && (
+                <p style={{ fontSize: 12, color: "#E8C547", marginTop: 6, display: "flex", alignItems: "center", gap: 6, fontWeight: 500 }}>
+                  <span>⭐</span>
+                  <span><strong>{btbCount.toLocaleString()}</strong> outperform your best location</span>
+                </p>
+              )}
+              <FilterPills filter={filter} setFilter={setFilter} tierCounts={tierCounts} totalScored={totalScored} btbCount={btbCount} savedCount={savedH3s.size} />
             </div>
 
-            {/* Scrollable results */}
+            {/* Scrollable list */}
             <div style={{ flex: 1, overflowY: "auto" }}>
               {loading && (
                 <div style={{ padding: 12, display: "flex", flexDirection: "column", gap: 8 }}>
@@ -302,24 +477,17 @@ function MapContent() {
                 </div>
               )}
               {error && <p style={{ color: "#D98880", fontSize: 12, padding: 16 }}>{error}</p>}
-              {!loading && !error && exactResults.length === 0 && (
-                <div style={{ margin: 16, padding: 16, borderRadius: 12, border: "1px solid rgba(0,210,230,0.12)", background: "rgba(0,210,230,0.04)" }}>
-                  <p style={{ fontSize: 12, color: "rgba(0,210,230,0.7)", fontWeight: 600, marginBottom: 6 }}>No exact matches yet</p>
-                  <p style={{ fontSize: 11, color: "rgba(160,170,185,0.65)", lineHeight: 1.6 }}>
-                    Add more of your existing locations on Screen 1 to unlock exact matches.
-                  </p>
-                </div>
-              )}
-              {!loading && !error && exactResults.map((r, i) => {
+              {showBtbEmpty && <BtbEmptyState isFreshMode={isFreshMode} />}
+              {showSavedEmpty && <SavedEmptyState />}
+              {!loading && !error && !showBtbEmpty && !showSavedEmpty && visibleResults.map((r, i) => {
                 const resemblesFailure = failureSet.has(r.h3_r7) || (r.failure_similarity != null && r.failure_similarity > 0.70);
-                const isBtb   = r.tier === "BETTER_THAN_BEST";
-                const isSaved = savedH3s.has(r.h3_r7);
+                const isBtb    = r.tier === "BETTER_THAN_BEST";
+                const isSaved  = savedH3s.has(r.h3_r7);
                 const isSelected = selected?.h3_r7 === r.h3_r7;
                 return (
                   <motion.div
                     key={r.h3_r7}
-                    initial={{ opacity: 0, x: -8 }}
-                    animate={{ opacity: 1, x: 0 }}
+                    initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
                     transition={{ delay: Math.min(i * 0.025, 0.45) }}
                     onClick={() => setSelected(r)}
                     role="button" tabIndex={0}
@@ -330,8 +498,7 @@ function MapContent() {
                       borderBottom: "1px solid rgba(0,210,230,0.05)",
                       borderLeft: isSelected ? "2px solid rgba(0,210,230,0.6)" : "2px solid transparent",
                       background: isSelected ? "rgba(0,210,230,0.05)" : "transparent",
-                      cursor: "pointer",
-                      transition: "all 0.15s",
+                      cursor: "pointer", transition: "all 0.15s",
                     }}
                     onMouseEnter={(e) => { if (!isSelected) (e.currentTarget as HTMLElement).style.background = "rgba(0,210,230,0.03)"; }}
                     onMouseLeave={(e) => { if (!isSelected) (e.currentTarget as HTMLElement).style.background = "transparent"; }}
@@ -377,40 +544,18 @@ function MapContent() {
                 );
               })}
             </div>
-
-            {/* CTA — inside list panel, clear of ChatWidget */}
-            <div style={{ padding: "14px 16px", borderTop: "1px solid rgba(0,210,230,0.1)", background: "rgba(2,5,9,0.98)", flexShrink: 0 }}>
-              <p style={{ fontSize: 11, fontFamily: "var(--font-geist-mono)", color: "rgba(255,255,255,0.28)", letterSpacing: "0.06em", marginBottom: 8, fontWeight: 600 }}>
-                {loading ? "Scanning…" : `${exactResults.length} exact matches · ${region}`}
-              </p>
-              <button
-                onClick={() => router.push(`/recommendations?category=${encodeURIComponent(category)}`)}
-                style={{
-                  width: "100%", display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
-                  padding: "11px 20px", borderRadius: 10,
-                  background: "rgba(0,210,230,0.1)", border: "1px solid rgba(0,210,230,0.4)",
-                  color: "#00D2E6", fontSize: 14, fontWeight: 800,
-                  cursor: "pointer", boxShadow: "0 0 20px rgba(0,210,230,0.08)",
-                  letterSpacing: "0.03em", transition: "all 0.15s",
-                }}
-              >
-                View All Recommendations <ArrowRight size={14} />
-              </button>
-            </div>
           </div>
 
           {/* Map */}
           <div style={{ flex: 1, position: "relative", overflow: "hidden", height: "100%" }}>
-            {/* Map corner brackets */}
             <div style={{ position: "absolute", top: 10, left: 10, width: 16, height: 16, borderTop: "1px solid rgba(0,210,230,0.35)", borderLeft: "1px solid rgba(0,210,230,0.35)", zIndex: 5, pointerEvents: "none" }} />
             <div style={{ position: "absolute", top: 10, right: 10, width: 16, height: 16, borderTop: "1px solid rgba(0,210,230,0.35)", borderRight: "1px solid rgba(0,210,230,0.35)", zIndex: 5, pointerEvents: "none" }} />
-
             {!loading && (
               <OpportunityMap
                 results={results}
                 selected={selected}
                 onSelect={setSelected}
-                filter={"EXACT_MATCH" as Filter}
+                filter={filter}
                 savedH3s={savedH3s}
                 exactMatchH3s={exactMatchH3s}
               />
@@ -473,7 +618,6 @@ function MapContent() {
             </AnimatePresence>
           </div>
         </div>
-
       </div>
 
       {/* AI widgets */}
@@ -488,10 +632,10 @@ function MapContent() {
   );
 }
 
-export default function MapPage() {
+export default function RecommendationsPage() {
   return (
     <Suspense>
-      <MapContent />
+      <RecommendationsContent />
     </Suspense>
   );
 }
