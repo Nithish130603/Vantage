@@ -3,7 +3,7 @@
 Data-driven location decisions for franchise expansion.
 
 ## Screenshot
-![Vantage Dashboard](docs/screenshots/dashboard.png)
+![Vantage Dashboard](dash.png)
 
 ## What it does
 Vantage is a powerful location intelligence platform built to help franchise founders find the perfect spot for their next store. By analyzing geographic, demographic, and foot traffic patterns, it scores potential locations based on their viability and growth potential. Our predictive models minimize the risk of new investments by relying on actionable, real-world data insights.
