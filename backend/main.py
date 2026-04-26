@@ -219,11 +219,11 @@ app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 app.add_middleware(SlowAPIMiddleware)
 
 import os as _os
-_frontend_origin = _os.environ.get("FRONTEND_ORIGIN", "http://localhost:3000")
 _extra_origins = [o.strip() for o in _os.environ.get("EXTRA_ORIGINS", "").split(",") if o.strip()]
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[_frontend_origin, "http://localhost:3000"] + _extra_origins,
+    allow_origins=["http://localhost:3000"] + _extra_origins,
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_methods=["*"],
     allow_headers=["*"],
     expose_headers=["X-RateLimit-Limit", "X-RateLimit-Remaining", "X-RateLimit-Reset"],
