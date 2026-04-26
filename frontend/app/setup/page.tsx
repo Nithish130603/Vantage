@@ -8,7 +8,7 @@ import { addUserStore } from "@/lib/stores";
 import SuburbTagInput from "@/components/ui/SuburbTagInput";
 
 // ── Constants ─────────────────────────────────────────────────────────────────
-const FALLBACK_CATEGORIES = ["Gym & Fitness", "Café", "Pharmacy"];
+const FALLBACK_CATEGORIES = ["Gym & Fitness", "Café", "Pharmacy", "Restaurant", "Retail"];
 const REGIONS = ["All Australia", "NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"];
 const COUNTRIES = [
   "United States", "United Kingdom", "Canada", "China", "India", "Japan", "South Korea",
