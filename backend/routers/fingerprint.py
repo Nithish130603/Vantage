@@ -18,6 +18,8 @@ from typing import Optional
 
 import numpy as np
 import requests
+
+from narrative import generate_dna_narrative
 from fastapi import APIRouter, Query
 from pydantic import BaseModel
 from sklearn.metrics.pairwise import cosine_similarity
@@ -111,6 +113,12 @@ class FingerprintResponse(BaseModel):
     unrecognised_suburbs: list[str]
     resolved_suburbs: dict[str, str]    # input → "Locality, STATE" for recognised inputs
     client_mean_gold_similarity: float  # alias of gold_standard_match; used by /scan for BTB
+    # AI-generated card explainers
+    explainer_dna: str = ""
+    explainer_opportunities: str = ""
+    explainer_comparison: str = ""
+    explainer_locations: str = ""
+    explainer_risk: str = ""
 
 
 def _geocode_suburb(name: str) -> tuple[str, float, float, str] | None:
@@ -301,30 +309,9 @@ def build_fingerprint(body: FingerprintRequest):
         for row in cat_rows
     ]
 
-    # ── DNA summary ───────────────────────────────────────────────────────────
-    sample_size = len(cell_ids)
-    top_names = [tc["category"] for tc in top_categories[:3]]
-
-    if body.mode == "fresh":
-        dna_summary = (
-            f"Using industry data from {sample_size} scored suburbs across Australia. "
-            f"Strong signals near: {' · '.join(top_names)}."
-            if top_names else
-            f"Using industry data from {sample_size} scored suburbs across Australia."
-        )
-    elif body.mode == "overseas":
-        dna_summary = (
-            f"Overseas DNA translated to Australian equivalents. "
-            f"Closest match: {' · '.join(top_names)}."
-            if top_names else
-            "Your overseas DNA has been translated to Australian equivalents."
-        )
-    else:
-        dna_summary = (
-            f"Your stores are distinctively near: {' · '.join(top_names)}."
-            if top_names else
-            "Your franchise DNA has been analysed and mapped."
-        )
+    # ── DNA summary (AI-generated) ────────────────────────────────────────────
+    # gap_cats computed below alongside improvement_hint, so we defer the
+    # narrative call until after the gap analysis block.
 
     # ── Improvement hint ──────────────────────────────────────────────────────
     # Compare gold-standard suburbs vs client suburbs by actual venue category mix
@@ -352,12 +339,6 @@ def build_fingerprint(body: FingerprintRequest):
         gap_cats = [g[0] for g in gaps if g[1] > 0.005]
     else:
         gap_cats = []
-    improvement_hint = (
-        "Successful " + body.category.lower() + " businesses are typically surrounded by more: "
-        + ", ".join(gap_cats) + "."
-        if gap_cats else
-        "Your location profile closely matches the industry benchmark for this category."
-    )
 
     # ── Data confidence ───────────────────────────────────────────────────────
     if n_locations >= 5:
@@ -366,6 +347,22 @@ def build_fingerprint(body: FingerprintRequest):
         data_confidence = "MEDIUM"
     else:
         data_confidence = "LOW"
+
+    # ── AI-generated narrative (all card text) ────────────────────────────────
+    narrative = generate_dna_narrative(
+        mode=body.mode,
+        category=body.category,
+        top_categories=top_categories,
+        n_locations=n_locations,
+        gold_standard_match_pct=int(round(gold_match * 100)),
+        client_weight=round(client_weight, 2),
+        data_confidence=data_confidence,
+        gap_cats=gap_cats,
+        resolved_suburbs=resolved_suburbs,
+        failure_summary=failure_summary,
+    )
+    dna_summary      = narrative.dna_summary
+    improvement_hint = narrative.improvement_hint
 
     # ── Project client locations into UMAP space ──────────────────────────────
     reducer = state.get("reducer")
@@ -414,4 +411,9 @@ def build_fingerprint(body: FingerprintRequest):
         unrecognised_suburbs=unrecognised,
         resolved_suburbs=resolved_suburbs,
         client_mean_gold_similarity=round(gold_match, 4),
+        explainer_dna=narrative.explainer_dna,
+        explainer_opportunities=narrative.explainer_opportunities,
+        explainer_comparison=narrative.explainer_comparison,
+        explainer_locations=narrative.explainer_locations,
+        explainer_risk=narrative.explainer_risk,
     )

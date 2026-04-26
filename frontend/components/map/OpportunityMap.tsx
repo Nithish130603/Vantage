@@ -19,14 +19,14 @@ const TOKEN = process.env.NEXT_PUBLIC_MAPBOX_TOKEN;
 
 // Tier display config
 const TIER_CFG: Record<string, { radius: number; opacity: number; glowRadius: number }> = {
-  BETTER_THAN_BEST: { radius: 9,  opacity: 1,    glowRadius: 22 },
-  PRIME:            { radius: 7,  opacity: 0.95, glowRadius: 18 },
-  STRONG:           { radius: 5,  opacity: 0.85, glowRadius: 14 },
-  WATCH:            { radius: 3.5,opacity: 0.65, glowRadius: 0  },
-  AVOID:            { radius: 2.5,opacity: 0.55, glowRadius: 0  },
+  BETTER_THAN_BEST: { radius: 9,  opacity: 1,    glowRadius: 24 },
+  PRIME:            { radius: 7,  opacity: 1,    glowRadius: 20 },
+  STRONG:           { radius: 5.5,opacity: 0.97, glowRadius: 16 },
+  WATCH:            { radius: 4.5,opacity: 0.88, glowRadius: 12 },
+  AVOID:            { radius: 3.5,opacity: 0.78, glowRadius: 0  },
 };
 
-const TIERS_WITH_GLOW = ["BETTER_THAN_BEST", "PRIME", "STRONG"];
+const TIERS_WITH_GLOW = ["BETTER_THAN_BEST", "PRIME", "STRONG", "WATCH"];
 
 function FallbackMap({ results, selected, onSelect }: Omit<Props, "filter">) {
   const tiers: Tier[] = ["BETTER_THAN_BEST", "PRIME", "STRONG", "WATCH", "AVOID"];
@@ -253,7 +253,7 @@ export default function OpportunityMap({ results, selected, onSelect, filter, sa
         paint: { "text-color": "#F0F0F2" },
       });
 
-      // Glow layer for STRONG / PRIME / BTB
+      // Glow layer for WATCH / STRONG / PRIME / BTB
       map.addLayer({
         id: "pins-glow",
         type: "circle",
@@ -262,8 +262,8 @@ export default function OpportunityMap({ results, selected, onSelect, filter, sa
         paint: {
           "circle-radius":  ["get", "glow_radius"],
           "circle-color":   ["get", "color"],
-          "circle-opacity": 0.12,
-          "circle-blur":    1.2,
+          "circle-opacity": 0.26,
+          "circle-blur":    0.9,
         },
       });
 
@@ -274,12 +274,12 @@ export default function OpportunityMap({ results, selected, onSelect, filter, sa
         source: "suburbs-cluster",
         filter: ["all", ["!", ["has", "point_count"]], ["!=", ["get", "tier"], "BETTER_THAN_BEST"]],
         paint: {
-          "circle-radius":       ["get", "dot_radius"],
-          "circle-color":        ["get", "color"],
-          "circle-opacity":      ["get", "dot_opacity"],
-          "circle-stroke-width": 1,
-          "circle-stroke-color": "rgba(0,0,0,0.4)",
-          "circle-stroke-opacity": 0.5,
+          "circle-radius":         ["get", "dot_radius"],
+          "circle-color":          ["get", "color"],
+          "circle-opacity":        ["get", "dot_opacity"],
+          "circle-stroke-width":   1.5,
+          "circle-stroke-color":   "rgba(255,255,255,0.35)",
+          "circle-stroke-opacity": 1,
         },
       });
 

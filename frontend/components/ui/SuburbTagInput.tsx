@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState, useCallback } from "react";
+import { createPortal } from "react-dom";
 import { api } from "@/lib/api";
 
 type Suggestion =
@@ -28,11 +29,37 @@ export default function SuburbTagInput({
   const [open, setOpen]                 = useState(false);
   const [activeIdx, setActiveIdx]       = useState(-1);
   const [loading, setLoading]           = useState(false);
+  const [dropdownPos, setDropdownPos]   = useState({ top: 0, left: 0, width: 0 });
+  const [mounted, setMounted]           = useState(false);
 
-  const inputRef    = useRef<HTMLInputElement>(null);
-  const dropdownRef = useRef<HTMLDivElement>(null);
-  const debounceRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  const isFocused   = useRef(false);
+  const inputRef     = useRef<HTMLInputElement>(null);
+  const containerRef = useRef<HTMLDivElement>(null);
+  const dropdownRef  = useRef<HTMLDivElement>(null);
+  const debounceRef  = useRef<ReturnType<typeof setTimeout> | null>(null);
+  const isFocused    = useRef(false);
+
+  useEffect(() => { setMounted(true); }, []);
+
+  // Reposition dropdown whenever it opens or window scrolls/resizes
+  useEffect(() => {
+    if (!open || !containerRef.current) return;
+    const update = () => {
+      if (!containerRef.current) return;
+      const rect = containerRef.current.getBoundingClientRect();
+      setDropdownPos({
+        top: rect.bottom + window.scrollY + 4,
+        left: rect.left + window.scrollX,
+        width: rect.width,
+      });
+    };
+    update();
+    window.addEventListener("scroll", update, true);
+    window.addEventListener("resize", update);
+    return () => {
+      window.removeEventListener("scroll", update, true);
+      window.removeEventListener("resize", update);
+    };
+  }, [open]);
 
   // Debounced fetch — Photon (OSM) first, falls back to local /suggest
   useEffect(() => {
@@ -53,7 +80,6 @@ export default function SuburbTagInput({
           setActiveIdx(-1);
           return;
         }
-        // Photon empty — fall back to local DuckDB suburb names
         const suburbs = await api.suggest(q, 8);
         setSuggestions(suburbs.map((s) => ({ ...s, kind: "suburb" as const })));
         setOpen(suburbs.length > 0);
@@ -120,8 +146,136 @@ export default function SuburbTagInput({
     }
   };
 
+  const dropdown = open ? (
+    <div
+      ref={dropdownRef}
+      style={{
+        position: "absolute",
+        top: dropdownPos.top,
+        left: dropdownPos.left,
+        width: dropdownPos.width,
+        background: "#131316",
+        border: "1px solid #26262B",
+        borderRadius: 6,
+        boxShadow: "0 8px 28px rgba(0,0,0,0.55)",
+        zIndex: 9999,
+        overflow: "hidden",
+      }}
+    >
+      {loading && suggestions.length === 0 && (
+        <div style={{ padding: "10px 14px", fontSize: 12, color: "#555566" }}>
+          Searching…
+        </div>
+      )}
+
+      {suggestions.map((s, i) => {
+        const label      = s.kind === "place" ? s.description : s.locality;
+        const commaIdx   = label.indexOf(",");
+        const mainText   = commaIdx > 0 ? label.slice(0, commaIdx) : label;
+        const subText    = commaIdx > 0 ? label.slice(commaIdx + 1).trim() : null;
+        const stateBadge = s.kind === "suburb" ? s.state : null;
+        const key        = s.kind === "place" ? s.place_id : s.h3_r7;
+
+        return (
+          <button
+            key={key}
+            onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s); }}
+            onMouseEnter={() => setActiveIdx(i)}
+            style={{
+              width: "100%",
+              display: "flex",
+              alignItems: "center",
+              gap: 10,
+              padding: "9px 14px",
+              background: activeIdx === i ? `${accent}1e` : "transparent",
+              border: "none",
+              borderBottom: i < suggestions.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none",
+              cursor: "pointer",
+              textAlign: "left",
+              transition: "background 0.1s",
+            }}
+          >
+            <svg width="11" height="14" viewBox="0 0 11 14" fill="none" style={{ flexShrink: 0, opacity: 0.4 }}>
+              <path
+                d="M5.5 0C3.02 0 1 2.02 1 4.5c0 3.375 4.5 9 4.5 9s4.5-5.625 4.5-9C10 2.02 7.98 0 5.5 0Zm0 6.125a1.625 1.625 0 1 1 0-3.25 1.625 1.625 0 0 1 0 3.25Z"
+                fill={accent}
+              />
+            </svg>
+
+            <span style={{ flex: 1, minWidth: 0 }}>
+              <span
+                style={{
+                  display: "block",
+                  fontSize: 13,
+                  color: activeIdx === i ? "#F0F0F2" : "#C8C8D4",
+                  fontFamily: "var(--font-geist-sans)",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {mainText.toLowerCase().startsWith(inputVal.toLowerCase()) ? (
+                  <>
+                    <strong style={{ color: "#F0F0F2", fontWeight: 600 }}>
+                      {mainText.slice(0, inputVal.length)}
+                    </strong>
+                    {mainText.slice(inputVal.length)}
+                  </>
+                ) : (
+                  mainText
+                )}
+              </span>
+              {subText && (
+                <span
+                  style={{
+                    display: "block",
+                    fontSize: 11,
+                    color: "#555566",
+                    fontFamily: "var(--font-geist-sans)",
+                    marginTop: 1,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {subText}
+                </span>
+              )}
+            </span>
+
+            {stateBadge && (
+              <span style={{ fontSize: 10, color: "#555566", fontFamily: "var(--font-geist-mono)", letterSpacing: "0.08em", flexShrink: 0 }}>
+                {stateBadge}
+              </span>
+            )}
+          </button>
+        );
+      })}
+
+      {/* OSM attribution — required by Photon/OSM terms */}
+      {suggestions.length > 0 && (
+        <div
+          style={{
+            padding: "5px 14px",
+            borderTop: "1px solid rgba(255,255,255,0.04)",
+            display: "flex",
+            alignItems: "center",
+            gap: 5,
+          }}
+        >
+          <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
+            <path d="M5 0a5 5 0 1 0 0 10A5 5 0 0 0 5 0Zm.5 7.5h-1v-3h1v3Zm0-4h-1v-1h1v1Z" fill="#3A3A4A" />
+          </svg>
+          <span style={{ fontSize: 10, color: "#3A3A4A", fontFamily: "var(--font-geist-mono)" }}>
+            © OpenStreetMap contributors
+          </span>
+        </div>
+      )}
+    </div>
+  ) : null;
+
   return (
-    <div style={{ position: "relative" }}>
+    <div ref={containerRef} style={{ position: "relative" }}>
       {/* Input area */}
       <div
         onClick={() => inputRef.current?.focus()}
@@ -212,135 +366,8 @@ export default function SuburbTagInput({
         />
       </div>
 
-      {/* Dropdown */}
-      {open && (
-        <div
-          ref={dropdownRef}
-          style={{
-            position: "absolute",
-            top: "calc(100% + 4px)",
-            left: 0,
-            right: 0,
-            background: "#131316",
-            border: "1px solid #26262B",
-            borderRadius: 6,
-            boxShadow: "0 8px 28px rgba(0,0,0,0.55)",
-            zIndex: 100,
-            overflow: "hidden",
-          }}
-        >
-          {loading && suggestions.length === 0 && (
-            <div style={{ padding: "10px 14px", fontSize: 12, color: "#555566" }}>
-              Searching…
-            </div>
-          )}
-
-          {suggestions.map((s, i) => {
-            const label      = s.kind === "place" ? s.description : s.locality;
-            const commaIdx   = label.indexOf(",");
-            const mainText   = commaIdx > 0 ? label.slice(0, commaIdx) : label;
-            const subText    = commaIdx > 0 ? label.slice(commaIdx + 1).trim() : null;
-            const stateBadge = s.kind === "suburb" ? s.state : null;
-            const key        = s.kind === "place" ? s.place_id : s.h3_r7;
-
-            return (
-              <button
-                key={key}
-                onMouseDown={(e) => { e.preventDefault(); selectSuggestion(s); }}
-                onMouseEnter={() => setActiveIdx(i)}
-                style={{
-                  width: "100%",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 10,
-                  padding: "9px 14px",
-                  background: activeIdx === i ? `${accent}1e` : "transparent",
-                  border: "none",
-                  borderBottom: i < suggestions.length - 1 ? "1px solid rgba(255,255,255,0.04)" : "none",
-                  cursor: "pointer",
-                  textAlign: "left",
-                  transition: "background 0.1s",
-                }}
-              >
-                {/* Pin icon */}
-                <svg width="11" height="14" viewBox="0 0 11 14" fill="none" style={{ flexShrink: 0, opacity: 0.4 }}>
-                  <path
-                    d="M5.5 0C3.02 0 1 2.02 1 4.5c0 3.375 4.5 9 4.5 9s4.5-5.625 4.5-9C10 2.02 7.98 0 5.5 0Zm0 6.125a1.625 1.625 0 1 1 0-3.25 1.625 1.625 0 0 1 0 3.25Z"
-                    fill={accent}
-                  />
-                </svg>
-
-                <span style={{ flex: 1, minWidth: 0 }}>
-                  <span
-                    style={{
-                      display: "block",
-                      fontSize: 13,
-                      color: activeIdx === i ? "#F0F0F2" : "#C8C8D4",
-                      fontFamily: "var(--font-geist-sans)",
-                      overflow: "hidden",
-                      textOverflow: "ellipsis",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {mainText.toLowerCase().startsWith(inputVal.toLowerCase()) ? (
-                      <>
-                        <strong style={{ color: "#F0F0F2", fontWeight: 600 }}>
-                          {mainText.slice(0, inputVal.length)}
-                        </strong>
-                        {mainText.slice(inputVal.length)}
-                      </>
-                    ) : (
-                      mainText
-                    )}
-                  </span>
-                  {subText && (
-                    <span
-                      style={{
-                        display: "block",
-                        fontSize: 11,
-                        color: "#555566",
-                        fontFamily: "var(--font-geist-sans)",
-                        marginTop: 1,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                    >
-                      {subText}
-                    </span>
-                  )}
-                </span>
-
-                {stateBadge && (
-                  <span style={{ fontSize: 10, color: "#555566", fontFamily: "var(--font-geist-mono)", letterSpacing: "0.08em", flexShrink: 0 }}>
-                    {stateBadge}
-                  </span>
-                )}
-              </button>
-            );
-          })}
-
-          {/* OSM attribution — required by Photon/OSM terms */}
-          {suggestions.length > 0 && (
-            <div
-              style={{
-                padding: "5px 14px",
-                borderTop: "1px solid rgba(255,255,255,0.04)",
-                display: "flex",
-                alignItems: "center",
-                gap: 5,
-              }}
-            >
-              <svg width="10" height="10" viewBox="0 0 10 10" fill="none">
-                <path d="M5 0a5 5 0 1 0 0 10A5 5 0 0 0 5 0Zm.5 7.5h-1v-3h1v3Zm0-4h-1v-1h1v1Z" fill="#3A3A4A" />
-              </svg>
-              <span style={{ fontSize: 10, color: "#3A3A4A", fontFamily: "var(--font-geist-mono)" }}>
-                © OpenStreetMap contributors
-              </span>
-            </div>
-          )}
-        </div>
-      )}
+      {/* Dropdown rendered via portal — escapes all overflow:hidden parents */}
+      {mounted && typeof document !== "undefined" && createPortal(dropdown, document.body)}
     </div>
   );
 }

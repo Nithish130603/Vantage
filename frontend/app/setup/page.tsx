@@ -4,11 +4,23 @@ import { useState, useEffect, useRef } from "react";
 import { useRouter } from "next/navigation";
 import { motion, AnimatePresence } from "framer-motion";
 import { api, type FingerprintRequest } from "@/lib/api";
+import { addUserStore } from "@/lib/stores";
 import SuburbTagInput from "@/components/ui/SuburbTagInput";
 
-// ── Constants (unchanged) ─────────────────────────────────────────────────────
+// ── Constants ─────────────────────────────────────────────────────────────────
 const FALLBACK_CATEGORIES = ["Gym & Fitness", "Café", "Pharmacy"];
 const REGIONS = ["All Australia", "NSW", "VIC", "QLD", "WA", "SA", "TAS", "ACT", "NT"];
+const COUNTRIES = [
+  "United States", "United Kingdom", "Canada", "China", "India", "Japan", "South Korea",
+  "Singapore", "New Zealand", "Germany", "France", "Italy", "Spain", "Netherlands",
+  "Sweden", "Norway", "Denmark", "Switzerland", "Austria", "Belgium", "Portugal",
+  "Brazil", "Mexico", "Argentina", "Colombia", "Chile", "Peru",
+  "South Africa", "Nigeria", "Kenya", "Egypt", "Morocco",
+  "United Arab Emirates", "Saudi Arabia", "Israel", "Turkey", "Pakistan", "Bangladesh",
+  "Indonesia", "Malaysia", "Thailand", "Vietnam", "Philippines", "Taiwan", "Hong Kong",
+  "Russia", "Poland", "Czech Republic", "Hungary", "Romania", "Ukraine",
+  "Ireland", "Scotland", "Finland", "Greece", "Other",
+];
 const DEMO_BEST  = ["Bondi Beach NSW", "Surry Hills NSW", "South Yarra VIC", "Fitzroy VIC", "New Farm QLD"];
 const DEMO_WORST = ["Broken Hill NSW"];
 const LOADING_MESSAGES = [
@@ -28,18 +40,16 @@ function parseLocations(raw: string): string[] {
 
 // ── Sidebar nav items ─────────────────────────────────────────────────────────
 const NAV_ITEMS = [
-  { label: "Dashboard", active: true,
+  { label: "Dashboard", active: true, path: "/setup",
     icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><rect x="1" y="1" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2"/><rect x="8.5" y="1" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2"/><rect x="1" y="8.5" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2"/><rect x="8.5" y="8.5" width="5.5" height="5.5" rx="1" stroke="currentColor" strokeWidth="1.2"/></svg> },
-  { label: "Insights", active: false,
+  { label: "Insights", active: false, path: "/dna",
     icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><polyline points="1,11 5,6 8,9 14,3" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/><polyline points="10,3 14,3 14,7" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/></svg> },
-  { label: "Exact Matches", active: false,
+  { label: "Exact Matches", active: false, path: "/map",
     icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.2"/><line x1="10" y1="10" x2="14" y2="14" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/><line x1="4.5" y1="6.5" x2="8.5" y2="6.5" stroke="currentColor" strokeWidth="1.1"/><line x1="6.5" y1="4.5" x2="6.5" y2="8.5" stroke="currentColor" strokeWidth="1.1"/></svg> },
-  { label: "Recommendations", active: false,
+  { label: "Recommendations", active: false, path: "/recommendations",
     icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><polygon points="7.5,1 9.5,5.5 14.5,6 11,9.5 12,14.5 7.5,12 3,14.5 4,9.5 0.5,6 5.5,5.5" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round"/></svg> },
-  { label: "Avoid Zones", active: false,
+  { label: "Avoid Zones", active: false, path: "/avoid",
     icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><circle cx="7.5" cy="7.5" r="6" stroke="currentColor" strokeWidth="1.2"/><line x1="3" y1="3" x2="12" y2="12" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg> },
-  { label: "Ask Vantage", active: false,
-    icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><path d="M1 1h13v9H8.5L5 13V10H1V1Z" stroke="currentColor" strokeWidth="1.2" strokeLinejoin="round"/></svg> },
 ];
 
 // ── Globe-to-map entrance transition ─────────────────────────────────────────
@@ -58,9 +68,8 @@ function GlobeTransition({ onComplete }: { onComplete: () => void }) {
 
     const cx = canvas.width / 2;
     const cy = canvas.height / 2;
-    let baseR = Math.min(canvas.width, canvas.height) * 0.36;
+    const baseR = Math.min(canvas.width, canvas.height) * 0.36;
 
-    // Same nodes as Screen 0
     const NODES = [
       { phi: 0.75, theta: 0.5  }, { phi: 1.20, theta: 2.1  },
       { phi: 0.50, theta: 1.3  }, { phi: 1.55, theta: 0.9  },
@@ -79,49 +88,36 @@ function GlobeTransition({ onComplete }: { onComplete: () => void }) {
       };
     }
 
-    // Total frames: ~3.5s at 60fps = 210 frames
     const FRAMES = 210;
     let t = 0;
     let raf: number;
 
     function draw() {
       if (!ctx || !canvas) return;
-      const progress = t / FRAMES; // 0 → 1
+      const progress = t / FRAMES;
 
       ctx.clearRect(0, 0, canvas.width, canvas.height);
       ctx.fillStyle = "#020509";
       ctx.fillRect(0, 0, canvas.width, canvas.height);
 
-      // Phase 1 (0–0.3): Globe appears from small
-      // Phase 2 (0.3–0.75): Globe is stable, showing
-      // Phase 3 (0.75–1.0): Globe expands & fades (zoom-into-globe)
       let scale = 1, opacity = 1;
       if (progress < 0.3) {
         opacity = progress / 0.3;
         scale = 0.85 + 0.15 * (progress / 0.3);
       } else if (progress < 0.75) {
-        opacity = 1;
-        scale = 1;
+        opacity = 1; scale = 1;
       } else {
         const p = (progress - 0.75) / 0.25;
-        scale = 1 + p * 4;
-        opacity = 1 - p;
+        scale = 1 + p * 4; opacity = 1 - p;
       }
 
-      if (t >= FRAMES) {
-        setVisible(false);
-        onComplete();
-        return;
-      }
+      if (t >= FRAMES) { setVisible(false); onComplete(); return; }
 
       const r = baseR;
       ctx.save();
       ctx.globalAlpha = opacity;
-      ctx.translate(cx, cy);
-      ctx.scale(scale, scale);
-      ctx.translate(-cx, -cy);
+      ctx.translate(cx, cy); ctx.scale(scale, scale); ctx.translate(-cx, -cy);
 
-      // Atmosphere glow
       const atmo = ctx.createRadialGradient(cx, cy, r * 0.85, cx, cy, r * 1.55);
       atmo.addColorStop(0, "rgba(13,115,119,0.0)");
       atmo.addColorStop(0.4, "rgba(13,115,119,0.09)");
@@ -129,7 +125,6 @@ function GlobeTransition({ onComplete }: { onComplete: () => void }) {
       ctx.fillStyle = atmo;
       ctx.beginPath(); ctx.arc(cx, cy, r * 1.55, 0, Math.PI * 2); ctx.fill();
 
-      // Rim light
       const rim = ctx.createRadialGradient(cx, cy, r * 0.92, cx, cy, r * 1.05);
       rim.addColorStop(0, "transparent");
       rim.addColorStop(0.7, "rgba(0,210,230,0.08)");
@@ -137,7 +132,6 @@ function GlobeTransition({ onComplete }: { onComplete: () => void }) {
       ctx.fillStyle = rim;
       ctx.beginPath(); ctx.arc(cx, cy, r * 1.05, 0, Math.PI * 2); ctx.fill();
 
-      // Globe body clip
       ctx.save();
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2); ctx.clip();
       const bodyGrd = ctx.createRadialGradient(cx - r*0.2, cy - r*0.2, 0, cx, cy, r);
@@ -145,7 +139,6 @@ function GlobeTransition({ onComplete }: { onComplete: () => void }) {
       bodyGrd.addColorStop(1, "rgba(2,8,14,0.99)");
       ctx.fillStyle = bodyGrd; ctx.fillRect(cx - r, cy - r, r * 2, r * 2);
 
-      // Lat lines
       for (let i = 1; i < 9; i++) {
         const angle = (i / 9) * Math.PI;
         const latR = r * Math.sin(angle), latY = cy + r * Math.cos(angle);
@@ -153,26 +146,21 @@ function GlobeTransition({ onComplete }: { onComplete: () => void }) {
         ctx.beginPath();
         ctx.ellipse(cx, latY, latR, latR * 0.15, 0, 0, Math.PI * 2);
         ctx.strokeStyle = isEq ? "rgba(0,220,240,0.32)" : "rgba(60,180,200,0.14)";
-        ctx.lineWidth = isEq ? 1.0 : 0.6;
-        ctx.stroke();
+        ctx.lineWidth = isEq ? 1.0 : 0.6; ctx.stroke();
       }
-      // Lon lines
       for (let i = 0; i < 12; i++) {
         const angle = (i / 12) * Math.PI + t * 0.003;
         const xR = r * Math.abs(Math.cos(angle));
         ctx.beginPath();
         ctx.ellipse(cx, cy, xR, r, 0, 0, Math.PI * 2);
         ctx.strokeStyle = i === 0 ? "rgba(0,220,240,0.24)" : "rgba(60,180,200,0.09)";
-        ctx.lineWidth = i === 0 ? 0.9 : 0.5;
-        ctx.stroke();
+        ctx.lineWidth = i === 0 ? 0.9 : 0.5; ctx.stroke();
       }
       ctx.restore();
 
-      // Globe outline
       ctx.beginPath(); ctx.arc(cx, cy, r, 0, Math.PI * 2);
       ctx.strokeStyle = "rgba(0,210,230,0.48)"; ctx.lineWidth = 1.2; ctx.stroke();
 
-      // Network nodes + arcs
       const proj = NODES.map(({ phi, theta }) => project(phi, theta + t * 0.005, r));
       for (const [a, b] of CONNECTIONS) {
         const na = proj[a], nb = proj[b];
@@ -207,7 +195,6 @@ function GlobeTransition({ onComplete }: { onComplete: () => void }) {
   return (
     <div className="fixed inset-0 z-50" style={{ backgroundColor: "#020509" }}>
       <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
-      {/* "INITIALISING" text during transition */}
       <div className="absolute inset-0 flex items-end justify-center pb-16 pointer-events-none">
         <motion.p
           initial={{ opacity: 0 }}
@@ -222,168 +209,7 @@ function GlobeTransition({ onComplete }: { onComplete: () => void }) {
   );
 }
 
-// ── Flat world-map canvas — matches Screen 0's palette exactly ────────────────
-function WorldMapCanvas() {
-  const ref = useRef<HTMLCanvasElement>(null);
-
-  useEffect(() => {
-    const canvas = ref.current;
-    if (!canvas) return;
-    const ctx = canvas.getContext("2d");
-    if (!ctx) return;
-
-    let raf: number, t = 0;
-
-    // City nodes — approximate Mercator positions (x,y as fraction of viewport)
-    const CITIES = [
-      // AU (highlighted — these are what we score)
-      { fx: 0.838, fy: 0.73,  bright: true,  label: "SYD" },
-      { fx: 0.828, fy: 0.78,  bright: true,  label: "MEL" },
-      { fx: 0.853, fy: 0.665, bright: false, label: "BNE" },
-      { fx: 0.745, fy: 0.72,  bright: false, label: "PER" },
-      // International
-      { fx: 0.878, fy: 0.795, bright: false, label: "AKL" },
-      { fx: 0.742, fy: 0.575, bright: true,  label: "SIN" },
-      { fx: 0.843, fy: 0.365, bright: true,  label: "TYO" },
-      { fx: 0.800, fy: 0.34,  bright: false, label: "SHA" },
-      { fx: 0.648, fy: 0.465, bright: false, label: "MUM" },
-      { fx: 0.588, fy: 0.43,  bright: true,  label: "DXB" },
-      { fx: 0.472, fy: 0.275, bright: true,  label: "LON" },
-      { fx: 0.482, fy: 0.305, bright: false, label: "PAR" },
-      { fx: 0.234, fy: 0.34,  bright: true,  label: "NYC" },
-      { fx: 0.114, fy: 0.395, bright: false, label: "LAX" },
-      { fx: 0.52,  fy: 0.21,  bright: false, label: "MOS" },
-    ];
-    const CONNS = [
-      [0,1],[0,5],[0,6],[5,6],[5,8],[8,9],[9,10],[10,12],[12,13],[10,11],[5,7],[6,7],[3,5],[2,5],[1,6],[10,14],
-    ];
-
-    function setup() {
-      if (!canvas) return;
-      canvas.width = window.innerWidth;
-      canvas.height = window.innerHeight;
-    }
-    setup();
-    window.addEventListener("resize", setup);
-
-    function draw() {
-      if (!ctx || !canvas) return;
-      const W = canvas.width, H = canvas.height;
-      ctx.clearRect(0, 0, W, H);
-
-      // Base background — exactly Screen 0's color
-      ctx.fillStyle = "#020509";
-      ctx.fillRect(0, 0, W, H);
-
-      // Subtle nebula-like atmospheric zones
-      const zones = [
-        { x: W*0.82, y: H*0.7, r: 280, c: "rgba(13,115,119,0.06)" },
-        { x: W*0.47, y: H*0.3, r: 200, c: "rgba(0,100,140,0.05)" },
-        { x: W*0.23, y: H*0.35,r: 180, c: "rgba(13,115,119,0.04)" },
-        { x: W*0.74, y: H*0.58,r: 160, c: "rgba(0,80,120,0.05)" },
-      ];
-      for (const z of zones) {
-        const g = ctx.createRadialGradient(z.x, z.y, 0, z.x, z.y, z.r);
-        g.addColorStop(0, z.c); g.addColorStop(1, "transparent");
-        ctx.fillStyle = g;
-        ctx.beginPath(); ctx.arc(z.x, z.y, z.r, 0, Math.PI * 2); ctx.fill();
-      }
-
-      // Flat world-map lat/lon grid — matches Screen 0's globe grid style
-      const LAT_LINES = 7;
-      for (let i = 0; i <= LAT_LINES; i++) {
-        const y = H * (i / LAT_LINES);
-        ctx.beginPath(); ctx.moveTo(0, y); ctx.lineTo(W, y);
-        const isEq = i === Math.floor(LAT_LINES / 2);
-        ctx.strokeStyle = isEq ? "rgba(0,210,230,0.12)" : "rgba(60,180,200,0.055)";
-        ctx.lineWidth = isEq ? 0.8 : 0.4;
-        ctx.stroke();
-      }
-      const LON_LINES = 14;
-      for (let i = 0; i <= LON_LINES; i++) {
-        const x = W * (i / LON_LINES);
-        ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, H);
-        ctx.strokeStyle = i === 7 ? "rgba(0,210,230,0.1)" : "rgba(60,180,200,0.04)";
-        ctx.lineWidth = 0.4;
-        ctx.stroke();
-      }
-
-      // Faint star field (same micro-dots as Screen 0)
-      if (t === 0) {
-        // Draw once — static stars
-        for (let i = 0; i < 200; i++) {
-          ctx.beginPath();
-          ctx.arc(Math.random() * W, Math.random() * H, Math.random() * 0.9 + 0.1, 0, Math.PI * 2);
-          ctx.fillStyle = `rgba(200,220,240,${Math.random() * 0.3 + 0.04})`;
-          ctx.fill();
-        }
-      }
-
-      // Arc connections between cities
-      for (const [a, b] of CONNS) {
-        const ca = CITIES[a], cb = CITIES[b];
-        const ax = ca.fx * W, ay = ca.fy * H;
-        const bx = cb.fx * W, by = cb.fy * H;
-        const mx = (ax + bx) / 2, my = (ay + by) / 2 - Math.hypot(bx - ax, by - ay) * 0.18;
-        const pulse = 0.5 + 0.5 * Math.sin(t * 0.025 + a * 0.7);
-        const alpha = (ca.bright || cb.bright ? 0.22 : 0.10) * pulse;
-        ctx.beginPath(); ctx.moveTo(ax, ay); ctx.quadraticCurveTo(mx, my, bx, by);
-        ctx.strokeStyle = `rgba(0,210,230,${alpha})`;
-        ctx.lineWidth = 0.7; ctx.stroke();
-      }
-
-      // City nodes
-      for (const city of CITIES) {
-        const x = city.fx * W, y = city.fy * H;
-        const pulse = 1 + 0.2 * Math.sin(t * 0.07 + x * 0.005);
-
-        if (city.bright) {
-          // Outer glow
-          const glow = ctx.createRadialGradient(x, y, 0, x, y, 20 * pulse);
-          glow.addColorStop(0, "rgba(0,210,230,0.22)");
-          glow.addColorStop(1, "transparent");
-          ctx.fillStyle = glow;
-          ctx.beginPath(); ctx.arc(x, y, 20 * pulse, 0, Math.PI * 2); ctx.fill();
-
-          // Ring
-          ctx.beginPath(); ctx.arc(x, y, 5 * pulse, 0, Math.PI * 2);
-          ctx.strokeStyle = "rgba(0,220,240,0.55)"; ctx.lineWidth = 0.8; ctx.stroke();
-
-          // Core
-          ctx.beginPath(); ctx.arc(x, y, 2.2, 0, Math.PI * 2);
-          ctx.fillStyle = "rgba(100,240,255,0.9)"; ctx.fill();
-        } else {
-          ctx.beginPath(); ctx.arc(x, y, 3 * pulse, 0, Math.PI * 2);
-          ctx.strokeStyle = "rgba(0,210,230,0.28)"; ctx.lineWidth = 0.7; ctx.stroke();
-          ctx.beginPath(); ctx.arc(x, y, 1.4, 0, Math.PI * 2);
-          ctx.fillStyle = "rgba(80,200,220,0.55)"; ctx.fill();
-        }
-      }
-
-      // Animated scan line — same as Screen 0
-      const scanY = ((t * 1.2) % (H * 1.15)) - H * 0.07;
-      const scanG = ctx.createLinearGradient(0, scanY - 6, 0, scanY + 6);
-      scanG.addColorStop(0, "transparent");
-      scanG.addColorStop(0.5, "rgba(0,210,230,0.18)");
-      scanG.addColorStop(1, "transparent");
-      ctx.fillStyle = scanG;
-      ctx.fillRect(0, scanY - 6, W, 12);
-
-      t++;
-      raf = requestAnimationFrame(draw);
-    }
-
-    draw();
-    return () => {
-      cancelAnimationFrame(raf);
-      window.removeEventListener("resize", setup);
-    };
-  }, []);
-
-  return <canvas ref={ref} className="absolute inset-0 w-full h-full pointer-events-none" />;
-}
-
-// ── Loading overlay (unchanged) ───────────────────────────────────────────────
+// ── Loading overlay ───────────────────────────────────────────────────────────
 function LoadingOverlay({ visible }: { visible: boolean }) {
   const [msgIdx, setMsgIdx] = useState(0);
   const [progress, setProgress] = useState(0);
@@ -528,10 +354,16 @@ function VantageSelect({ value, onChange, options, placeholder, loading: isLoadi
 export default function UploadPage() {
   const router = useRouter();
 
-  const [transitionDone, setTransitionDone]   = useState(false);
+  const [transitionDone, setTransitionDone]   = useState(
+    () => typeof sessionStorage !== "undefined" && sessionStorage.getItem("vantage_intro_done") === "1"
+  );
+  // True once the user has run at least one analysis this session
+  const [analysisDone] = useState(
+    () => typeof sessionStorage !== "undefined" && !!sessionStorage.getItem("vantage_dna")
+  );
+  const [lockedNudge, setLockedNudge] = useState(false);
   const [sidebarOpen, setSidebarOpen]         = useState(true);
 
-  // All original state (untouched)
   const [selectedCategory, setSelectedCategory] = useState<string | null>(null);
   const [categories, setCategories]             = useState<string[]>(FALLBACK_CATEGORIES);
   const [categoriesLoading, setCategoriesLoading] = useState(true);
@@ -550,9 +382,8 @@ export default function UploadPage() {
       .finally(() => setCategoriesLoading(false));
   }, []);
 
-  const canSubmit = selectedCategory !== null && !loading;
+  const canSubmit = selectedCategory !== null && !loading && (situation !== "A" || bestLocations.length > 0);
 
-  // All original handlers (untouched)
   async function runDemo() {
     setError(null); setLoading(true);
     try {
@@ -561,6 +392,7 @@ export default function UploadPage() {
       sessionStorage.setItem("vantage_dna", JSON.stringify(result));
       sessionStorage.setItem("vantage_category", "Gym & Fitness");
       sessionStorage.setItem("vantage_region", "All Australia");
+      sessionStorage.setItem("vantage_mode", "existing");
       router.push("/dna");
     } catch (e) { setError(e instanceof Error ? e.message : "Demo failed — is the backend running?"); }
     finally { setLoading(false); }
@@ -578,29 +410,75 @@ export default function UploadPage() {
       sessionStorage.setItem("vantage_dna", JSON.stringify(result));
       sessionStorage.setItem("vantage_category", selectedCategory);
       sessionStorage.setItem("vantage_region", selectedRegion);
+      sessionStorage.setItem("vantage_mode", mode);
+
+      // Auto-sync uploaded locations → user_stores (fire-and-forget)
+      if (mode === "existing" && result.resolved_suburbs) {
+        const resolved = result.resolved_suburbs as Record<string, string>;
+        const toSync = [
+          ...best_locations.filter((l) => resolved[l]).map((l) => ({ raw: l, performance: "best" as const })),
+          ...worst_locations.filter((l) => resolved[l]).map((l) => ({ raw: l, performance: "worst" as const })),
+        ];
+        toSync.forEach(({ raw, performance }) => {
+          const canonical = resolved[raw];
+          const sep = canonical.lastIndexOf(", ");
+          const locality = sep >= 0 ? canonical.slice(0, sep) : canonical;
+          const state    = sep >= 0 ? canonical.slice(sep + 2) : "AU";
+          addUserStore({ category: selectedCategory!, locality, state, performance }).catch(() => {});
+        });
+      }
+
       router.push("/dna");
     } catch (e) { setError(e instanceof Error ? e.message : "API error — is the backend running?"); }
     finally { setLoading(false); }
   };
 
-  // Card border style
-  const situCard = (active: boolean): React.CSSProperties => ({
-    borderRadius: 4,
-    border: `1px solid ${active ? "rgba(0,210,230,0.45)" : "rgba(0,210,230,0.12)"}`,
-    borderLeft: `2px solid ${active ? "#0DC5CC" : "rgba(0,210,230,0.12)"}`,
-    backgroundColor: active ? "rgba(0,210,230,0.06)" : "rgba(4,12,20,0.72)",
-    padding: "14px 16px",
+  // Bento card style — matches reference design
+  const bentoCard = (active: boolean): React.CSSProperties => ({
+    background: active ? "rgba(8,38,48,0.88)" : "rgba(25,31,49,0.8)",
+    backdropFilter: "blur(8px)",
+    border: active ? "2px solid #00daf3" : "1px solid rgba(59,73,76,0.6)",
+    borderRadius: 8,
+    padding: 20,
+    display: "flex",
+    alignItems: "flex-start",
+    gap: 16,
     cursor: "pointer",
+    position: "relative",
     transition: "all 0.15s ease",
-    backdropFilter: "blur(6px)",
-    boxShadow: active ? "0 0 20px rgba(0,210,230,0.06)" : "none",
+    boxShadow: active ? "0 0 20px rgba(0,218,243,0.1)" : "none",
   });
+
+  const circleNum: React.CSSProperties = {
+    width: 24, height: 24, borderRadius: "50%",
+    background: "rgba(39,79,85,0.6)", color: "#00e5ff",
+    display: "flex", alignItems: "center", justifyContent: "center",
+    fontSize: 12, fontWeight: 700, border: "1px solid rgba(59,73,76,0.8)", flexShrink: 0,
+  };
+
+  const cardStyle: React.CSSProperties = {
+    background: "rgba(21,27,45,0.7)", backdropFilter: "blur(12px)",
+    borderRadius: 12, border: "1px solid rgba(193,234,241,0.2)",
+    padding: 24, boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+    position: "relative", overflow: "hidden",
+  };
+
+  const card2Style: React.CSSProperties = {
+    background: "rgba(21,27,45,0.7)", backdropFilter: "blur(12px)",
+    borderRadius: 12, border: "1px solid rgba(193,234,241,0.2)",
+    padding: 24, boxShadow: "0 8px 32px rgba(0,0,0,0.5)",
+  };
+
+  const checkIcon = (
+    <svg style={{ position: "absolute", top: 16, right: 16, color: "#00daf3", flexShrink: 0 }} width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+      <path d="M22 11.08V12a10 10 0 11-5.93-9.14"/>
+      <polyline points="22,4 12,14.01 9,11.01"/>
+    </svg>
+  );
 
   return (
     <>
-      {/* Globe entrance transition */}
-      {!transitionDone && <GlobeTransition onComplete={() => setTransitionDone(true)} />}
-
+      {!transitionDone && <GlobeTransition onComplete={() => { sessionStorage.setItem("vantage_intro_done", "1"); setTransitionDone(true); }} />}
       <LoadingOverlay visible={loading} />
 
       <AnimatePresence>
@@ -610,28 +488,44 @@ export default function UploadPage() {
             animate={{ opacity: 1 }}
             transition={{ duration: 0.5 }}
             className="h-screen overflow-hidden flex"
-            style={{ backgroundColor: "#020509", fontFamily: "var(--font-geist-mono)" }}
+            style={{ backgroundColor: "#0c1324", fontFamily: "var(--font-geist-mono)" }}
           >
             {/* ── BACKGROUND ─────────────────────────────────────────────── */}
-            <div className="absolute inset-0 pointer-events-none" aria-hidden="true">
-              <WorldMapCanvas />
-              {/* Edge vignette — same as Screen 0 */}
+            <div className="fixed inset-0 z-0 pointer-events-none">
+              {/* top + bottom gradient vignette */}
               <div style={{
-                position: "absolute", inset: 0,
-                background: "radial-gradient(ellipse 80% 80% at 50% 50%, transparent 30%, rgba(2,5,9,0.72) 100%)",
+                position: "absolute", inset: 0, zIndex: 1,
+                background: "linear-gradient(to top, #070d1f 0%, transparent 40%, rgba(7,13,31,0.8) 100%)",
               }}/>
+              {/* CRT scan-line pattern */}
+              <div style={{
+                position: "absolute", inset: 0, zIndex: 1, opacity: 0.5,
+                backgroundImage: "linear-gradient(to bottom, transparent 50%, rgba(0,218,243,0.05) 51%, transparent 51%)",
+                backgroundSize: "100% 4px",
+              }}/>
+              {/* map image — same source as reference */}
+              {/* eslint-disable-next-line @next/next/no-img-element */}
+              <img
+                alt="Dark cybernetic map visualization with glowing cyan nodes"
+                style={{
+                  width: "100%", height: "100%", objectFit: "cover",
+                  opacity: 0.30, mixBlendMode: "screen",
+                  filter: "grayscale(50%) sepia(20%) hue-rotate(180deg) brightness(1.1)",
+                }}
+                src="https://lh3.googleusercontent.com/aida-public/AB6AXuBxVxJUkoTJnYYytEG9CwAqyPSZOgNfXRXYZlgonWUufYOcIXLMGX-5nIEXk6V6z6Bf4EycLDxqcADbOroxC-8lyPc-PWh_xt18IZtER9xXDdYzT6sNwiqQqmtFgJZTiNxUraYuvVg1FKWmWhHKPt-nZYdTR4wpRZPAIm6xGkryA9eRbWFE0-OQph00VzR8a02D5aKhnU1f_51fPcX9lF2Xaumgh5piVLFicnu51cNOTOd47fvjhRafeBpQNUQlwMz5CeUlC2i9ZPc"
+              />
             </div>
 
             {/* ═══════════════════════════════════════════════════════════
-                COLLAPSIBLE SIDEBAR — Screen 0 palette
+                COLLAPSIBLE SIDEBAR
             ═══════════════════════════════════════════════════════════ */}
             <motion.aside
               animate={{ width: sidebarOpen ? 218 : 60 }}
               transition={{ duration: 0.22, ease: [0.4, 0, 0.2, 1] }}
-              className="relative z-10 flex flex-col shrink-0 overflow-hidden"
+              className="relative z-20 flex flex-col shrink-0 overflow-hidden"
               style={{
                 borderRight: "1px solid rgba(0,210,230,0.1)",
-                background: "linear-gradient(180deg, rgba(2,7,14,0.98) 0%, rgba(2,5,10,0.98) 100%)",
+                background: "linear-gradient(180deg, rgba(5,10,20,0.98) 0%, rgba(4,8,18,0.98) 100%)",
                 backdropFilter: "blur(10px)",
               }}
             >
@@ -656,7 +550,6 @@ export default function UploadPage() {
                     </motion.div>
                   )}
                 </AnimatePresence>
-
                 {!sidebarOpen && (
                   <div className="w-7 h-7 rounded flex items-center justify-center"
                     style={{ background: "rgba(0,210,230,0.1)", border: "1px solid rgba(0,210,230,0.3)" }}>
@@ -666,7 +559,6 @@ export default function UploadPage() {
                     </svg>
                   </div>
                 )}
-
                 {sidebarOpen && (
                   <button onClick={() => setSidebarOpen(false)}
                     className="w-7 h-7 rounded flex items-center justify-center transition-all"
@@ -678,7 +570,6 @@ export default function UploadPage() {
                 )}
               </div>
 
-              {/* Expand button (collapsed state) */}
               {!sidebarOpen && (
                 <button onClick={() => setSidebarOpen(true)} className="flex items-center justify-center mx-auto mt-3 w-8 h-8 rounded transition-all"
                   style={{ color: "rgba(0,210,230,0.5)", border: "1px solid rgba(0,210,230,0.18)", background: "rgba(0,210,230,0.04)" }}
@@ -688,43 +579,75 @@ export default function UploadPage() {
                 </button>
               )}
 
-              {/* Nav label */}
               {sidebarOpen && (
                 <p className="px-5 pt-5 pb-2" style={{ fontSize: 10, letterSpacing: "0.25em", textTransform: "uppercase", color: "rgba(0,210,230,0.7)", fontWeight: 700 }}>
                   Navigation
                 </p>
               )}
 
-              {/* Nav items */}
               <nav className="flex-1 px-2 space-y-0.5 mt-1">
-                {NAV_ITEMS.map((item) => (
-                  <div key={item.label}
-                    className="flex items-center rounded-sm transition-all duration-150"
-                    style={{
-                      gap: sidebarOpen ? 10 : 0, justifyContent: sidebarOpen ? "flex-start" : "center",
-                      padding: sidebarOpen ? "9px 10px" : "9px 0",
-                      background: item.active ? "rgba(0,210,230,0.08)" : "transparent",
-                      borderLeft: item.active && sidebarOpen ? "2px solid rgba(0,210,230,0.7)" : "2px solid transparent",
-                      color: item.active ? "#0DC5CC" : "rgba(200,230,235,0.85)",
-                    }}>
-                    <span style={{ opacity: item.active ? 1 : 0.65, flexShrink: 0 }}>{item.icon}</span>
-                    <AnimatePresence>
-                      {sidebarOpen && (
-                        <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                          transition={{ duration: 0.1 }} style={{ fontSize: 14, letterSpacing: "0.04em", whiteSpace: "nowrap", fontWeight: 600 }}>
-                          {item.label}
-                        </motion.span>
+                {NAV_ITEMS.map((item) => {
+                  const locked = !item.active && !analysisDone;
+                  return (
+                    <div key={item.label}
+                      onClick={() => {
+                        if (item.active) return;
+                        if (locked) {
+                          setLockedNudge(true);
+                          setTimeout(() => setLockedNudge(false), 2400);
+                          return;
+                        }
+                        router.push(item.path);
+                      }}
+                      className="flex items-center rounded-sm transition-all duration-150"
+                      style={{
+                        gap: sidebarOpen ? 10 : 0, justifyContent: sidebarOpen ? "flex-start" : "center",
+                        padding: sidebarOpen ? "9px 10px" : "9px 0",
+                        background: item.active ? "rgba(0,210,230,0.08)" : "transparent",
+                        borderLeft: item.active && sidebarOpen ? "2px solid rgba(0,210,230,0.7)" : "2px solid transparent",
+                        color: item.active ? "#0DC5CC" : locked ? "rgba(200,230,235,0.28)" : "rgba(200,230,235,0.85)",
+                        cursor: item.active ? "default" : locked ? "not-allowed" : "pointer",
+                        opacity: locked ? 0.45 : 1,
+                      }}>
+                      <span style={{ opacity: item.active ? 1 : locked ? 0.4 : 0.65, flexShrink: 0 }}>{item.icon}</span>
+                      <AnimatePresence>
+                        {sidebarOpen && (
+                          <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                            transition={{ duration: 0.1 }} style={{ fontSize: 14, letterSpacing: "0.04em", whiteSpace: "nowrap", fontWeight: item.active ? 700 : 600 }}>
+                            {item.label}
+                          </motion.span>
+                        )}
+                      </AnimatePresence>
+                      {item.active && sidebarOpen && (
+                        <motion.div className="ml-auto w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#0DC5CC" }}
+                          animate={{ opacity: [1, 0.3, 1] }} transition={{ duration: 1.8, repeat: Infinity }} />
                       )}
-                    </AnimatePresence>
-                    {item.active && sidebarOpen && (
-                      <motion.div className="ml-auto w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#0DC5CC" }}
-                        animate={{ opacity: [1, 0.3, 1] }} transition={{ duration: 1.8, repeat: Infinity }} />
-                    )}
-                  </div>
-                ))}
+                      {locked && sidebarOpen && (
+                        <svg className="ml-auto" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                          <rect x="1.5" y="4.5" width="7" height="5" rx="1" stroke="rgba(0,210,230,0.25)" strokeWidth="1"/>
+                          <path d="M3 4.5V3a2 2 0 014 0v1.5" stroke="rgba(0,210,230,0.25)" strokeWidth="1" strokeLinecap="round"/>
+                        </svg>
+                      )}
+                    </div>
+                  );
+                })}
               </nav>
 
-              {/* System status */}
+              {/* Locked nudge */}
+              <AnimatePresence>
+                {lockedNudge && sidebarOpen && (
+                  <motion.div
+                    initial={{ opacity: 0, y: 4 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: 4 }}
+                    transition={{ duration: 0.18 }}
+                    style={{ margin: "0 12px 8px", padding: "8px 10px", borderRadius: 3, background: "rgba(0,210,230,0.05)", border: "1px solid rgba(0,210,230,0.2)", borderLeft: "2px solid rgba(0,210,230,0.5)" }}
+                  >
+                    <p style={{ fontSize: 10, color: "rgba(0,210,230,0.75)", letterSpacing: "0.04em", lineHeight: 1.5 }}>
+                      Complete the analysis first to unlock navigation.
+                    </p>
+                  </motion.div>
+                )}
+              </AnimatePresence>
+
               <AnimatePresence>
                 {sidebarOpen && (
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -740,13 +663,13 @@ export default function UploadPage() {
                 )}
               </AnimatePresence>
 
-              {/* User profile */}
               <AnimatePresence>
                 {sidebarOpen && (
                   <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
                     className="px-3 pb-4" style={{ borderTop: "1px solid rgba(0,210,230,0.08)", paddingTop: 12 }}>
                     <div className="flex items-center gap-2.5 px-3 py-2.5 rounded-sm"
-                      style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(0,210,230,0.1)" }}>
+                      onClick={() => router.push("/profile")}
+                      style={{ background: "rgba(255,255,255,0.02)", border: "1px solid rgba(0,210,230,0.1)", cursor: "pointer" }}>
                       <div className="w-7 h-7 rounded-full flex items-center justify-center shrink-0"
                         style={{ background: "rgba(0,210,230,0.1)", border: "1px solid rgba(0,210,230,0.3)" }}>
                         <svg width="13" height="13" viewBox="0 0 11 11" fill="none">
@@ -777,380 +700,289 @@ export default function UploadPage() {
             </motion.aside>
 
             {/* ═══════════════════════════════════════════════════════════
-                MAIN CONTENT
+                MAIN CONTENT + FOOTER
             ═══════════════════════════════════════════════════════════ */}
-            <div className="relative z-10 flex-1 flex flex-col min-w-0">
+            <div className="relative z-10 flex-1 flex flex-col min-w-0 h-screen">
 
-              {/* Top bar — Screen 0 style */}
-              <div className="flex items-center justify-between px-6 py-3.5 shrink-0"
-                style={{ borderBottom: "1px solid rgba(0,210,230,0.1)", background: "rgba(2,5,9,0.65)", backdropFilter: "blur(8px)" }}>
-                <div>
-                  <p style={{ fontSize: 11, letterSpacing: "0.22em", textTransform: "uppercase", color: "rgba(0,210,230,0.95)", marginBottom: 4, fontWeight: 600 }}>
-                    Vantage · Location Intelligence
-                  </p>
-                  <h1 style={{ fontSize: 24, fontWeight: 700, letterSpacing: "0.01em", color: "#FFFFFF", fontFamily: "var(--font-geist-sans)" }}>
-                    Where should your next store go?
-                  </h1>
-                </div>
-                <div className="flex items-center gap-5">
-                  <button onClick={runDemo}
-                    className="flex items-center gap-2 transition-all"
-                    style={{ fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase", color: "rgba(0,210,230,0.7)", border: "1px solid rgba(0,210,230,0.22)", borderRadius: 3, padding: "6px 13px", background: "rgba(0,210,230,0.04)" }}
-                    onMouseEnter={(e) => { e.currentTarget.style.borderColor = "rgba(0,210,230,0.55)"; e.currentTarget.style.color = "#0DC5CC"; e.currentTarget.style.background = "rgba(0,210,230,0.08)"; }}
-                    onMouseLeave={(e) => { e.currentTarget.style.borderColor = "rgba(0,210,230,0.22)"; e.currentTarget.style.color = "rgba(0,210,230,0.7)"; e.currentTarget.style.background = "rgba(0,210,230,0.04)"; }}>
-                    <svg width="9" height="9" viewBox="0 0 10 10" fill="none"><polygon points="2,1 9,5 2,9" fill="currentColor"/></svg>
-                    Demo — Gym &amp; Fitness
-                  </button>
-                  <div className="flex items-center gap-2">
-                    <motion.span className="w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#0D9BA0" }}
-                      animate={{ opacity: [1, 0.3, 1] }} transition={{ duration: 1.6, repeat: Infinity }} />
-                    <span style={{ fontSize: 10, letterSpacing: "0.2em", textTransform: "uppercase", color: "rgba(0,155,160,0.85)" }}>System Online</span>
-                  </div>
-                </div>
-              </div>
+              {/* Scrollable content area */}
+              <div className="flex-1 overflow-y-auto">
+                <div style={{
+                  maxWidth: 800, margin: "0 auto", padding: "48px 24px 24px",
+                  display: "flex", flexDirection: "column", alignItems: "center",
+                  justifyContent: "center", minHeight: "calc(100vh - 32px)",
+                }}>
+                  <div style={{ width: "100%", maxWidth: 600, display: "flex", flexDirection: "column", gap: 24 }}>
 
-              {/* ── TWO-COLUMN BODY ────────────────────────────────────────── */}
-              <div className="flex-1 flex min-h-0 overflow-hidden">
+                    {/* Header */}
+                    <motion.header
+                      initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.06 }}
+                      style={{ textAlign: "center", marginBottom: 16 }}
+                    >
+                      <button onClick={runDemo}
+                        style={{
+                          display: "inline-flex", alignItems: "center", gap: 8,
+                          fontSize: 11, letterSpacing: "0.12em", textTransform: "uppercase",
+                          color: "rgba(0,210,230,0.7)", border: "1px solid rgba(0,210,230,0.22)",
+                          borderRadius: 3, padding: "6px 13px", background: "rgba(0,210,230,0.04)",
+                          cursor: "pointer", fontFamily: "var(--font-geist-mono)",
+                        }}
+                        onMouseEnter={(e) => { e.currentTarget.style.borderColor = "rgba(0,210,230,0.55)"; e.currentTarget.style.color = "#0DC5CC"; e.currentTarget.style.background = "rgba(0,210,230,0.08)"; }}
+                        onMouseLeave={(e) => { e.currentTarget.style.borderColor = "rgba(0,210,230,0.22)"; e.currentTarget.style.color = "rgba(0,210,230,0.7)"; e.currentTarget.style.background = "rgba(0,210,230,0.04)"; }}
+                      >
+                        <svg width="9" height="9" viewBox="0 0 10 10" fill="none"><polygon points="2,1 9,5 2,9" fill="currentColor"/></svg>
+                        Demo — Gym &amp; Fitness
+                      </button>
+                    </motion.header>
 
-                {/* LEFT COLUMN — config cards */}
-                <div className="flex-1 overflow-y-auto px-6 py-5 min-w-0">
-                  <div style={{ maxWidth: 620 }}>
+                    {/* Card 1 — Your Business */}
+                    <motion.section
+                      initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.10 }}
+                      style={cardStyle}
+                    >
+                      {/* top shimmer line */}
+                      <div style={{
+                        position: "absolute", top: 0, left: 0, right: 0, height: 1,
+                        background: "linear-gradient(to right, transparent, rgba(193,234,241,0.3), transparent)",
+                      }}/>
 
-                    {/* Card 1: Engine Configuration */}
-                    <motion.div
-                      initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.08 }}
-                      className="rounded" style={{ marginBottom: 14, border: "1px solid rgba(0,210,230,0.14)", background: "rgba(2,8,16,0.72)", backdropFilter: "blur(10px)", padding: "18px 20px" }}>
-                      <div className="flex items-center gap-2.5 mb-5">
-                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                          <circle cx="7" cy="7" r="3" stroke="#0DC5CC" strokeWidth="1"/>
-                          <circle cx="7" cy="7" r="6" stroke="rgba(0,210,230,0.4)" strokeWidth="0.7" strokeDasharray="2 1.5"/>
-                        </svg>
-                        <p style={{ fontSize: 13, letterSpacing: "0.18em", textTransform: "uppercase", color: "#0DC5CC", fontWeight: 700 }}>
-                          Step 1 — Your Business
-                        </p>
-                      </div>
+                      <h2 style={{ fontSize: 24, fontWeight: 600, color: "#00daf3", marginBottom: 24, display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--font-geist-sans)" }}>
+                        <span style={circleNum}>1</span>
+                        Your Business
+                      </h2>
 
-                      {/* Industry + Region side-by-side */}
-                      <div className="grid grid-cols-2 gap-4">
-                        <div>
-                          <p style={{ fontSize: 12, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,210,230,0.95)", marginBottom: 10, fontWeight: 600 }}>
-                            What type of business? {!selectedCategory && <span style={{ color: "#0DC5CC", fontSize: 10 }}>· Pick one</span>}
-                          </p>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          <label style={{ fontSize: 12, letterSpacing: "0.1em", fontWeight: 700, textTransform: "uppercase", color: "#bac9cc" }}>
+                            Business Type
+                          </label>
                           <VantageSelect value={selectedCategory} onChange={setSelectedCategory}
-                            options={categories} placeholder="Select industry…" loading={categoriesLoading} />
+                            options={categories} placeholder="Select sector…" loading={categoriesLoading} />
                         </div>
-                        <div>
-                          <p style={{ fontSize: 12, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,210,230,0.95)", marginBottom: 10, fontWeight: 600 }}>
-                            Where in Australia?
-                          </p>
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          <label style={{ fontSize: 12, letterSpacing: "0.1em", fontWeight: 700, textTransform: "uppercase", color: "#bac9cc" }}>
+                            Target Vector (Location)
+                          </label>
                           <VantageSelect value={selectedRegion} onChange={setSelectedRegion} options={REGIONS} />
                         </div>
                       </div>
-                    </motion.div>
+                    </motion.section>
 
-                    {/* Card 2: Your Situation */}
-                    <motion.div
+                    {/* Card 2 — About You */}
+                    <motion.section
                       initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.14 }}
-                      className="rounded" style={{ border: "1px solid rgba(0,210,230,0.14)", background: "rgba(2,8,16,0.72)", backdropFilter: "blur(10px)", padding: "18px 20px" }}>
-                      <div className="flex items-center gap-2.5 mb-5">
-                        <svg width="14" height="14" viewBox="0 0 14 14" fill="none">
-                          <polygon points="7,1 8.5,5.5 13,6 9.5,9 10.5,13.5 7,11 3.5,13.5 4.5,9 1,6 5.5,5.5" stroke="#0DC5CC" strokeWidth="0.9" strokeLinejoin="round"/>
-                        </svg>
-                        <p style={{ fontSize: 13, letterSpacing: "0.18em", textTransform: "uppercase", color: "#0DC5CC", fontWeight: 700 }}>
-                          Step 2 — About You
-                        </p>
-                      </div>
+                      style={card2Style}
+                    >
+                      <h2 style={{ fontSize: 24, fontWeight: 600, color: "#00daf3", marginBottom: 24, display: "flex", alignItems: "center", gap: 8, fontFamily: "var(--font-geist-sans)" }}>
+                        <span style={circleNum}>2</span>
+                        About You
+                      </h2>
 
-                      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                      <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
 
-                        {/* Card A */}
-                        <div onClick={() => setSituation("A")} style={situCard(situation === "A")}>
-                          <div className="flex items-center gap-2.5 mb-1">
-                            <div className="w-4 h-4 rounded-full flex items-center justify-center shrink-0"
-                              style={{ border: `1.5px solid ${situation==="A" ? "#0DC5CC" : "rgba(0,210,230,0.35)"}` }}>
-                              {situation==="A" && <div className="w-2 h-2 rounded-full" style={{ backgroundColor:"#0DC5CC" }}/>}
-                            </div>
-                            <p style={{ fontSize: 16, color: "#FFFFFF", fontFamily: "var(--font-geist-sans)", fontWeight: 600 }}>I already have stores</p>
+                        {/* Bento A — I already have stores */}
+                        <div onClick={() => setSituation("A")} style={bentoCard(situation === "A")}>
+                          <div style={{
+                            width: 40, height: 40, borderRadius: 4, flexShrink: 0,
+                            background: situation === "A" ? "rgba(39,79,85,0.6)" : "rgba(46,52,71,0.8)",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            color: situation === "A" ? "#00e5ff" : "#849396",
+                            transition: "all 0.15s ease",
+                          }}>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M3 9l9-7 9 7v11a2 2 0 01-2 2H5a2 2 0 01-2-2z"/>
+                              <polyline points="9,22 9,12 15,12 15,22"/>
+                            </svg>
                           </div>
-                          <p style={{ fontSize: 13, color: "rgba(0,210,230,0.85)", marginLeft: 26 }}>Use your best locations to find similar ones</p>
-                          <AnimatePresence>
-                            {situation === "A" && (
-                              <motion.div initial={{ opacity:0, height:0 }} animate={{ opacity:1, height:"auto" }} exit={{ opacity:0, height:0 }} transition={{ duration:0.22 }} className="overflow-hidden">
-                                <div className="mt-4 space-y-4" onClick={(e) => e.stopPropagation()}>
-                                  <div>
-                                    <p style={{ fontSize: 12, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,210,230,0.95)", marginBottom: 8, fontWeight: 600 }}>Your best locations</p>
-                                    <SuburbTagInput value={bestLocations} onChange={setBestLocations} placeholder="Type a suburb…" maxTags={20}/>
-                                  </div>
-                                  <div>
-                                    <div className="flex items-center gap-2 mb-2">
-                                      <p style={{ fontSize: 12, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(200,230,235,0.9)", fontWeight: 600 }}>Locations that didn't work</p>
-                                      <span style={{ fontSize: 9, padding: "2px 8px", borderRadius: 3, color: "rgba(0,210,230,0.55)", border: "1px solid rgba(0,210,230,0.2)" }}>Optional</span>
+                          <div style={{ flex: 1 }}>
+                            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#dce1fb", marginBottom: 4, fontFamily: "var(--font-geist-sans)" }}>I already have stores</h3>
+                            <p style={{ fontSize: 14, color: "#bac9cc" }}>You have stores already — we&apos;ll find the best new spots without hurting your current ones.</p>
+                            <AnimatePresence>
+                              {situation === "A" && (
+                                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.22 }} className="overflow-hidden">
+                                  <div className="mt-4 space-y-4" onClick={(e) => e.stopPropagation()}>
+                                    <div>
+                                      <p style={{ fontSize: 12, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(0,210,230,0.95)", marginBottom: 8, fontWeight: 600 }}>Your best locations</p>
+                                      <SuburbTagInput value={bestLocations} onChange={setBestLocations} placeholder="Type a suburb…" maxTags={20}/>
                                     </div>
-                                    <SuburbTagInput value={worstLocations} onChange={setWorstLocations} placeholder="Type a suburb…" maxTags={10} variant="danger"/>
+                                    <div>
+                                      <div className="flex items-center gap-2 mb-2">
+                                        <p style={{ fontSize: 12, letterSpacing: "0.15em", textTransform: "uppercase", color: "rgba(200,230,235,0.9)", fontWeight: 600 }}>Locations that didn't work</p>
+                                        <span style={{ fontSize: 9, padding: "2px 8px", borderRadius: 3, color: "rgba(0,210,230,0.55)", border: "1px solid rgba(0,210,230,0.2)" }}>Optional</span>
+                                      </div>
+                                      <SuburbTagInput value={worstLocations} onChange={setWorstLocations} placeholder="Type a suburb…" maxTags={10} variant="danger"/>
+                                    </div>
                                   </div>
-                                </div>
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </div>
+                          {situation === "A" && checkIcon}
                         </div>
 
-                        {/* Card B */}
-                        <div onClick={() => setSituation("B")} style={situCard(situation === "B")}>
-                          <div className="flex items-center gap-2.5 mb-1">
-                            <div className="w-4 h-4 rounded-full flex items-center justify-center shrink-0"
-                              style={{ border: `1.5px solid ${situation==="B" ? "#0DC5CC" : "rgba(0,210,230,0.35)"}` }}>
-                              {situation==="B" && <div className="w-2 h-2 rounded-full" style={{ backgroundColor:"#0DC5CC" }}/>}
-                            </div>
-                            <p style={{ fontSize: 16, color: "#FFFFFF", fontFamily: "var(--font-geist-sans)", fontWeight: 600 }}>I'm new to Australia</p>
+                        {/* Bento B — I'm new to Australia */}
+                        <div onClick={() => setSituation("B")} style={bentoCard(situation === "B")}>
+                          <div style={{
+                            width: 40, height: 40, borderRadius: 4, flexShrink: 0,
+                            background: situation === "B" ? "rgba(39,79,85,0.6)" : "rgba(46,52,71,0.8)",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            color: situation === "B" ? "#00e5ff" : "#849396",
+                            transition: "all 0.15s ease",
+                          }}>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                              <path d="M12 19V5M12 19l-5-5M12 19l5-5"/>
+                              <line x1="5" y1="22" x2="19" y2="22"/>
+                            </svg>
                           </div>
-                          <p style={{ fontSize: 13, color: "rgba(0,210,230,0.85)", marginLeft: 26 }}>
-                            We'll use top-performing {selectedCategory ? selectedCategory.toLowerCase() : "business"} location data to guide you
-                          </p>
+                          <div style={{ flex: 1 }}>
+                            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#dce1fb", marginBottom: 4, fontFamily: "var(--font-geist-sans)" }}>I&apos;m opening my first store</h3>
+                            <p style={{ fontSize: 14, color: "#bac9cc" }}>No stores yet? We&apos;ll show you the best areas to open your very first location in Australia.</p>
+                          </div>
+                          {situation === "B" && checkIcon}
                         </div>
 
-                        {/* Card C */}
-                        <div onClick={() => setSituation("C")} style={situCard(situation === "C")}>
-                          <div className="flex items-center gap-2.5 mb-1">
-                            <div className="w-4 h-4 rounded-full flex items-center justify-center shrink-0"
-                              style={{ border: `1.5px solid ${situation==="C" ? "#0DC5CC" : "rgba(0,210,230,0.35)"}` }}>
-                              {situation==="C" && <div className="w-2 h-2 rounded-full" style={{ backgroundColor:"#0DC5CC" }}/>}
-                            </div>
-                            <p style={{ fontSize: 16, color: "#FFFFFF", fontFamily: "var(--font-geist-sans)", fontWeight: 600 }}>I'm coming from overseas</p>
+                        {/* Bento C — I'm coming from overseas */}
+                        <div onClick={() => setSituation("C")} style={bentoCard(situation === "C")}>
+                          <div style={{
+                            width: 40, height: 40, borderRadius: 4, flexShrink: 0,
+                            background: situation === "C" ? "rgba(39,79,85,0.6)" : "rgba(46,52,71,0.8)",
+                            display: "flex", alignItems: "center", justifyContent: "center",
+                            color: situation === "C" ? "#00e5ff" : "#849396",
+                            transition: "all 0.15s ease",
+                          }}>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round">
+                              <circle cx="12" cy="12" r="10"/>
+                              <line x1="2" y1="12" x2="22" y2="12"/>
+                              <path d="M12 2a15.3 15.3 0 014 10 15.3 15.3 0 01-4 10 15.3 15.3 0 01-4-10 15.3 15.3 0 014-10z"/>
+                            </svg>
                           </div>
-                          <p style={{ fontSize: 13, color: "rgba(0,210,230,0.85)", marginLeft: 26 }}>We'll match your overseas success to the best Australian suburbs</p>
-                          <AnimatePresence>
-                            {situation === "C" && (
-                              <motion.div initial={{ opacity:0, height:0 }} animate={{ opacity:1, height:"auto" }} exit={{ opacity:0, height:0 }} transition={{ duration:0.22 }} className="overflow-hidden">
-                                <div className="mt-4" onClick={(e) => e.stopPropagation()}>
-                                  <textarea rows={3} value={overseasRaw} onChange={(e) => setOverseasRaw(e.target.value)}
-                                    placeholder="Manhattan NY, Brooklyn NY, Chicago IL"
-                                    style={{ width:"100%", backgroundColor:"rgba(2,8,16,0.8)", border:"1px solid rgba(0,210,230,0.18)", borderRadius:4, padding:"10px 12px", fontSize:12, color:"rgba(200,235,240,0.88)", fontFamily:"var(--font-geist-mono)", resize:"none", outline:"none" }}
-                                    onFocus={(e) => (e.target.style.borderColor = "rgba(0,210,230,0.5)")}
-                                    onBlur={(e) => (e.target.style.borderColor = "rgba(0,210,230,0.18)")}/>
-                                  <p style={{ fontSize: 10, marginTop: 5, color: "rgba(0,210,230,0.38)" }}>Your home-country locations — optional</p>
-                                </div>
-                              </motion.div>
-                            )}
-                          </AnimatePresence>
+                          <div style={{ flex: 1 }}>
+                            <h3 style={{ fontSize: 16, fontWeight: 600, color: "#dce1fb", marginBottom: 4, fontFamily: "var(--font-geist-sans)" }}>I&apos;m coming from overseas</h3>
+                            <p style={{ fontSize: 14, color: "#bac9cc" }}>Already running a business abroad? Tell us where, and we&apos;ll find similar spots in Australia.</p>
+                            <AnimatePresence>
+                              {situation === "C" && (
+                                <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: "auto" }} exit={{ opacity: 0, height: 0 }} transition={{ duration: 0.22 }} className="overflow-hidden">
+                                  <div className="mt-4" onClick={(e) => e.stopPropagation()}>
+                                    <label style={{ display: "block", fontSize: 12, letterSpacing: "0.1em", fontWeight: 700, textTransform: "uppercase", color: "rgba(0,210,230,0.95)", marginBottom: 8 }}>
+                                      Which country are you coming from?
+                                    </label>
+                                    <div className="relative">
+                                      <select
+                                        value={overseasRaw}
+                                        onChange={(e) => setOverseasRaw(e.target.value)}
+                                        style={{
+                                          width: "100%", appearance: "none", WebkitAppearance: "none",
+                                          backgroundColor: overseasRaw ? "rgba(0,210,230,0.07)" : "rgba(6,18,24,0.85)",
+                                          border: overseasRaw ? "1px solid rgba(0,210,230,0.45)" : "1px solid rgba(0,210,230,0.18)",
+                                          borderRadius: 4, padding: "11px 40px 11px 14px",
+                                          fontSize: 13, letterSpacing: "0.04em", fontFamily: "var(--font-geist-mono)",
+                                          color: overseasRaw ? "rgba(200,240,245,0.95)" : "rgba(0,210,230,0.45)",
+                                          cursor: "pointer", outline: "none", transition: "all 0.15s ease",
+                                        }}
+                                        onFocus={(e) => { e.target.style.borderColor = "rgba(0,210,230,0.6)"; }}
+                                        onBlur={(e) => { e.target.style.borderColor = overseasRaw ? "rgba(0,210,230,0.45)" : "rgba(0,210,230,0.18)"; }}
+                                      >
+                                        <option value="" disabled style={{ background: "#04090f", color: "rgba(0,210,230,0.45)" }}>Select your country…</option>
+                                        {COUNTRIES.map((c) => (
+                                          <option key={c} value={c} style={{ background: "#04090f", color: "rgba(200,240,245,0.9)" }}>{c}</option>
+                                        ))}
+                                      </select>
+                                      <div className="absolute pointer-events-none" style={{ right: 13, top: "50%", transform: "translateY(-50%)" }}>
+                                        <svg width="11" height="11" viewBox="0 0 11 11" fill="none">
+                                          <path d="M2 4l3.5 3.5L9 4" stroke={overseasRaw ? "rgba(0,210,230,0.8)" : "rgba(0,210,230,0.35)"} strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/>
+                                        </svg>
+                                      </div>
+                                    </div>
+                                  </div>
+                                </motion.div>
+                              )}
+                            </AnimatePresence>
+                          </div>
+                          {situation === "C" && checkIcon}
                         </div>
 
                       </div>
+                    </motion.section>
+
+                    {/* ANALYZE LOCATIONS button */}
+                    <motion.div
+                      initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.18 }}
+                      style={{ display: "flex", justifyContent: "center" }}
+                    >
+                      <button
+                        onClick={handleSubmit}
+                        disabled={!canSubmit}
+                        style={{
+                          width: "100%", maxWidth: 384,
+                          background: canSubmit ? "rgba(0,218,243,0.2)" : "rgba(0,218,243,0.05)",
+                          color: canSubmit ? "#00daf3" : "rgba(0,218,243,0.3)",
+                          border: canSubmit ? "1px solid #00daf3" : "1px solid rgba(0,218,243,0.2)",
+                          borderRadius: 4, padding: "16px 32px",
+                          fontFamily: "var(--font-geist-mono)", fontSize: 12,
+                          letterSpacing: "0.1em", textTransform: "uppercase", fontWeight: 700,
+                          cursor: canSubmit ? "pointer" : "not-allowed",
+                          display: "flex", alignItems: "center", justifyContent: "center", gap: 8,
+                          backdropFilter: "blur(12px)",
+                          boxShadow: canSubmit ? "0 0 15px rgba(0,218,243,0.3)" : "none",
+                          transition: "all 0.3s ease",
+                        }}
+                        onMouseEnter={(e) => { if (!canSubmit) return; e.currentTarget.style.background = "rgba(0,218,243,0.3)"; e.currentTarget.style.boxShadow = "0 0 25px rgba(0,218,243,0.6)"; }}
+                        onMouseLeave={(e) => { if (!canSubmit) return; e.currentTarget.style.background = "rgba(0,218,243,0.2)"; e.currentTarget.style.boxShadow = "0 0 15px rgba(0,218,243,0.3)"; }}
+                      >
+                        ANALYZE LOCATIONS
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round">
+                          <circle cx="11" cy="11" r="8"/>
+                          <line x1="21" y1="21" x2="16.65" y2="16.65"/>
+                          <line x1="11" y1="8" x2="11" y2="14"/>
+                          <line x1="8" y1="11" x2="14" y2="11"/>
+                        </svg>
+                      </button>
                     </motion.div>
 
                     {/* Error */}
                     {error && (
-                      <div className="flex items-start gap-2 rounded px-4 py-3 mt-3"
-                        style={{ fontSize: 12, background:"rgba(127,29,29,0.18)", border:"1px solid rgba(153,27,27,0.35)", color:"#fca5a5" }}>
-                        <span style={{ flexShrink:0 }}>!</span> {error}
+                      <div className="flex items-start gap-2 rounded px-4 py-3"
+                        style={{ fontSize: 12, background: "rgba(127,29,29,0.18)", border: "1px solid rgba(153,27,27,0.35)", color: "#fca5a5" }}>
+                        <span style={{ flexShrink: 0 }}>!</span> {error}
                       </div>
                     )}
 
                   </div>
                 </div>
-
-                {/* RIGHT PANEL — sticky CTA */}
-                <motion.div
-                  initial={{ opacity: 0, x: 12 }} animate={{ opacity: 1, x: 0 }} transition={{ delay: 0.12 }}
-                  className="shrink-0 py-5 pr-5 pl-3"
-                  style={{ width: 268 }}>
-
-                  <div style={{ position: "sticky", top: 20, display: "flex", flexDirection: "column", gap: 10 }}>
-
-                  {/* ── CTA CARD ─────────────────────────────────────────── */}
-                  <motion.div
-                    initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.18 }}
-                    style={{
-                      border: `1px solid ${canSubmit ? "rgba(0,210,230,0.28)" : "rgba(0,210,230,0.09)"}`,
-                      background: "rgba(2,8,16,0.9)",
-                      backdropFilter: "blur(14px)",
-                      borderRadius: 6,
-                      padding: "18px 18px 16px",
-                      transition: "border-color 0.35s ease, box-shadow 0.35s ease",
-                      boxShadow: canSubmit ? "0 0 60px rgba(0,210,230,0.07), 0 0 120px rgba(0,210,230,0.03)" : "none",
-                      position: "relative",
-                      overflow: "hidden",
-                    }}>
-
-                    {/* Corner accents */}
-                    {canSubmit && [
-                      { top: 0, left: 0, borderTop: "1px solid rgba(0,210,230,0.45)", borderLeft: "1px solid rgba(0,210,230,0.45)" },
-                      { top: 0, right: 0, borderTop: "1px solid rgba(0,210,230,0.45)", borderRight: "1px solid rgba(0,210,230,0.45)" },
-                      { bottom: 0, left: 0, borderBottom: "1px solid rgba(0,210,230,0.45)", borderLeft: "1px solid rgba(0,210,230,0.45)" },
-                      { bottom: 0, right: 0, borderBottom: "1px solid rgba(0,210,230,0.45)", borderRight: "1px solid rgba(0,210,230,0.45)" },
-                    ].map((s, i) => (
-                      <motion.div key={i} initial={{ opacity: 0 }} animate={{ opacity: 1 }} transition={{ delay: 0.3 + i * 0.05 }}
-                        style={{ position: "absolute", width: 10, height: 10, ...s }} />
-                    ))}
-
-                    {/* Status chip */}
-                    <div style={{ display: "flex", alignItems: "center", gap: 7, marginBottom: 14 }}>
-                      <motion.div
-                        style={{ width: 5, height: 5, borderRadius: "50%", backgroundColor: canSubmit ? "#0DC5CC" : "rgba(0,210,230,0.2)", flexShrink: 0 }}
-                        animate={canSubmit ? { opacity: [1, 0.25, 1] } : { opacity: 0.2 }}
-                        transition={{ duration: 1.5, repeat: Infinity }}
-                      />
-                      <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: 9, letterSpacing: "0.28em", textTransform: "uppercase", color: canSubmit ? "rgba(0,210,230,0.75)" : "rgba(0,210,230,0.25)", fontWeight: 700 }}>
-                        {canSubmit ? "Ready for Analysis" : "Configure above"}
-                      </p>
-                    </div>
-
-                    {/* Industry display */}
-                    <div style={{ minHeight: 58, marginBottom: 16 }}>
-                      <AnimatePresence mode="wait">
-                        {canSubmit ? (
-                          <motion.div key="active" initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -4 }} transition={{ duration: 0.22 }}>
-                            <p style={{ fontFamily: "var(--font-fraunces)", fontSize: 24, fontWeight: 300, color: "#F0F0F2", lineHeight: 1.2, marginBottom: 5 }}>
-                              {selectedCategory}
-                            </p>
-                            <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: 10, color: "rgba(0,210,230,0.5)", letterSpacing: "0.08em" }}>
-                              {selectedRegion} · 7,734 suburbs
-                            </p>
-                          </motion.div>
-                        ) : (
-                          <motion.p key="idle" initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                            style={{ fontFamily: "var(--font-fraunces)", fontSize: 20, fontWeight: 300, color: "rgba(200,230,235,0.14)", lineHeight: 1.35 }}>
-                            Select industry<br />to begin
-                          </motion.p>
-                        )}
-                      </AnimatePresence>
-                    </div>
-
-                    {/* ── THE BUTTON ── */}
-                    <motion.button
-                      onClick={handleSubmit}
-                      disabled={!canSubmit}
-                      style={{
-                        width: "100%",
-                        padding: "13px 0",
-                        position: "relative",
-                        overflow: "hidden",
-                        borderRadius: 4,
-                        fontFamily: "var(--font-geist-mono)",
-                        fontSize: 11,
-                        letterSpacing: "0.24em",
-                        textTransform: "uppercase",
-                        fontWeight: 700,
-                        background: "transparent",
-                        border: `1px solid ${canSubmit ? "#0DC5CC" : "rgba(0,210,230,0.1)"}`,
-                        color: canSubmit ? "#0DC5CC" : "rgba(0,210,230,0.18)",
-                        cursor: canSubmit ? "pointer" : "not-allowed",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        gap: 10,
-                        boxShadow: canSubmit
-                          ? "0 0 20px rgba(0,210,230,0.12), inset 0 0 18px rgba(0,210,230,0.04)"
-                          : "none",
-                        transition: "box-shadow 0.2s ease",
-                      }}
-                      whileHover={canSubmit ? { scale: 1.015 } : {}}
-                      whileTap={canSubmit ? { scale: 0.985 } : {}}
-                      onMouseEnter={(e) => {
-                        if (!canSubmit) return;
-                        e.currentTarget.style.background = "rgba(0,210,230,0.06)";
-                        e.currentTarget.style.boxShadow = "0 0 36px rgba(0,210,230,0.22), inset 0 0 28px rgba(0,210,230,0.08)";
-                      }}
-                      onMouseLeave={(e) => {
-                        e.currentTarget.style.background = "transparent";
-                        e.currentTarget.style.boxShadow = canSubmit ? "0 0 20px rgba(0,210,230,0.12), inset 0 0 18px rgba(0,210,230,0.04)" : "none";
-                      }}>
-                      {/* Breathing inner glow */}
-                      {canSubmit && (
-                        <motion.div
-                          style={{ position: "absolute", inset: 0, background: "linear-gradient(135deg, rgba(0,210,230,0.07) 0%, transparent 55%)", pointerEvents: "none" }}
-                          animate={{ opacity: [0.5, 1, 0.5] }}
-                          transition={{ duration: 2.8, repeat: Infinity, ease: "easeInOut" }}
-                        />
-                      )}
-                      <span style={{ position: "relative" }}>Analyse Locations</span>
-                      <svg width="12" height="12" viewBox="0 0 12 12" fill="none" style={{ position: "relative" }}>
-                        <path d="M1 11L11 1M11 1H4M11 1V8" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round"/>
-                      </svg>
-                    </motion.button>
-
-                    {canSubmit && (
-                      <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: 9, textAlign: "center", marginTop: 9, color: "rgba(0,210,230,0.28)", letterSpacing: "0.14em", textTransform: "uppercase" }}>
-                        Data science–driven · {selectedRegion}
-                      </p>
-                    )}
-                  </motion.div>
-
-                  {/* ── YOUR CHOICES ─────────────────────────────────────── */}
-                  <motion.div
-                    initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.24 }}
-                    style={{ padding: "14px 16px", border: "1px solid rgba(0,210,230,0.09)", borderRadius: 6, background: "rgba(2,8,16,0.75)", backdropFilter: "blur(8px)" }}>
-                    <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: 9, letterSpacing: "0.26em", textTransform: "uppercase", color: "rgba(0,210,230,0.45)", marginBottom: 12, fontWeight: 700 }}>Your Choices</p>
-                    <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-                      {[
-                        { label: "Industry", val: selectedCategory ?? "—", active: !!selectedCategory },
-                        { label: "Region",   val: selectedRegion,           active: true },
-                        { label: "Mode",     val: situation === "A" ? "Scale Existing" : situation === "B" ? "Start Fresh" : situation === "C" ? "Enter Australia" : "—", active: !!situation },
-                      ].map((row) => (
-                        <div key={row.label} style={{ display: "flex", alignItems: "baseline", justifyContent: "space-between", gap: 8 }}>
-                          <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: 9, letterSpacing: "0.16em", textTransform: "uppercase", color: "rgba(0,210,230,0.4)", fontWeight: 700, flexShrink: 0 }}>{row.label}</p>
-                          <p style={{ fontFamily: "var(--font-geist-mono)", fontSize: 11, color: row.active ? "#F0F0F2" : "rgba(200,230,235,0.2)", fontWeight: row.active ? 600 : 400, textAlign: "right" }}>{row.val}</p>
-                        </div>
-                      ))}
-                    </div>
-                  </motion.div>
-
-                  </div>
-                </motion.div>
               </div>
 
-              {/* ── HORIZONTAL PROCESS STEPS — bottom bar ─────────────────── */}
-              <motion.div
-                initial={{ opacity: 0, y: 6 }} animate={{ opacity: 1, y: 0 }} transition={{ delay: 0.3 }}
-                className="shrink-0 flex items-center px-6 py-3"
-                style={{ borderTop: "1px solid rgba(0,210,230,0.1)", background: "rgba(2,5,9,0.72)", backdropFilter: "blur(8px)" }}>
-
-                <p style={{ fontSize: 10, letterSpacing: "0.22em", textTransform: "uppercase", color: "rgba(0,210,230,0.75)", marginRight: 20, whiteSpace: "nowrap", fontWeight: 700 }}>
-                  How it works
-                </p>
-
-                <div className="flex items-center gap-0 flex-1">
-                  {[
-                    { n: "01", t: "Decode DNA",     d: "Extract commercial fingerprint" },
-                    { n: "02", t: "Scan Australia",  d: "Score 7,734 suburbs" },
-                    { n: "03", t: "Find the Gap",    d: "Surface high-opportunity zones" },
-                  ].map((step, i) => (
-                    <div key={step.n} className="flex items-center">
-                      <div className="flex items-center gap-2.5 px-4 py-2 rounded"
-                        style={{ background: "rgba(0,210,230,0.04)", border: "1px solid rgba(0,210,230,0.1)" }}>
-                        <span style={{ fontSize: 12, color: "#0DC5CC", letterSpacing: "0.1em", fontWeight: 700, flexShrink: 0 }}>{step.n}</span>
-                        <div>
-                          <p style={{ fontSize: 13, color: "#FFFFFF", lineHeight: 1, letterSpacing: "0.03em", fontWeight: 600 }}>{step.t}</p>
-                          <p style={{ fontSize: 11, color: "rgba(0,210,230,0.7)", marginTop: 3, letterSpacing: "0.02em" }}>{step.d}</p>
-                        </div>
-                      </div>
-                      {i < 2 && (
-                        <div className="flex items-center px-3">
-                          <div style={{ width: 20, height: 1, background: "rgba(0,210,230,0.25)" }}/>
-                          <svg width="6" height="8" viewBox="0 0 6 8" fill="none" style={{ marginLeft: -1 }}>
-                            <path d="M1 1l4 3-4 3" stroke="rgba(0,210,230,0.4)" strokeWidth="1.2" strokeLinecap="round" strokeLinejoin="round"/>
-                          </svg>
-                        </div>
-                      )}
-                    </div>
-                  ))}
+              {/* ── FOOTER — reference style ──────────────────────────────── */}
+              <footer style={{
+                flexShrink: 0,
+                display: "flex", justifyContent: "space-between", alignItems: "center",
+                padding: "0 16px", height: 32,
+                borderTop: "1px solid rgba(0,218,243,0.2)",
+                background: "rgba(5,10,20,0.95)",
+                backdropFilter: "blur(8px)",
+                boxShadow: "0 -4px 12px rgba(0,0,0,0.5)",
+                fontSize: 10, letterSpacing: "0.1em", textTransform: "uppercase",
+                fontFamily: "var(--font-geist-mono)",
+              }}>
+                <span style={{ color: "#0DC5CC" }}>© 2026 VANTAGE · LOCATION INTELLIGENCE PLATFORM</span>
+                <div style={{ display: "flex", gap: 24 }}>
+                  <a href="#" style={{ color: "#475569", textDecoration: "none" }}>Privacy Policy</a>
+                  <a href="#" style={{ color: "#0DC5CC", display: "flex", alignItems: "center", gap: 6, textDecoration: "none" }}>
+                    <motion.span
+                      style={{ width: 6, height: 6, borderRadius: "50%", background: "#0DC5CC", display: "inline-block" }}
+                      animate={{ opacity: [1, 0.3, 1] }}
+                      transition={{ duration: 1.6, repeat: Infinity }}
+                    />
+                    Service Status
+                  </a>
+                  <a href="#" style={{ color: "#475569", textDecoration: "none" }}>Node Map</a>
                 </div>
+              </footer>
 
-                {/* Scan line indicator — matches Screen 0 */}
-                <div className="flex items-center gap-2 ml-auto pl-4">
-                  <div style={{ width:1, height:24, background:"rgba(0,210,230,0.15)" }}/>
-                  <div>
-                    <p style={{ fontSize: 9, letterSpacing: "0.22em", textTransform: "uppercase", color: "rgba(0,210,230,0.35)" }}>V.04.2-ALPHA</p>
-                  </div>
-                </div>
-
-              </motion.div>
-
-            </div>{/* end main */}
+            </div>
           </motion.div>
         )}
       </AnimatePresence>
 
-      {/* Corner brackets — same as Screen 0 */}
+      {/* Corner brackets */}
       {[{top:0,left:0},{top:0,right:0},{bottom:0,left:0},{bottom:0,right:0}].map((pos,i)=>(
         <div key={i} className="fixed z-10 pointer-events-none" style={{...pos,width:20,height:20}}>
           <svg width="20" height="20" viewBox="0 0 20 20" fill="none">
@@ -1162,7 +994,7 @@ export default function UploadPage() {
         </div>
       ))}
 
-      {/* Scan line — same as Screen 0 */}
+      {/* Scan line */}
       {transitionDone && (
         <motion.div className="fixed inset-x-0 h-px pointer-events-none z-20"
           style={{ background: "linear-gradient(to right, transparent 0%, rgba(0,210,230,0.35) 40%, rgba(0,210,230,0.6) 50%, rgba(0,210,230,0.35) 60%, transparent 100%)" }}

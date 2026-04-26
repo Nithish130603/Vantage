@@ -543,3 +543,102 @@ async def generate_ai_report(
         "risk_assessment": result.get("risk_assessment"),
         "completed":       result.get("completed", []),
     }
+
+
+# ── POST /agent/explain/stream ─────────────────────────────────────────────────
+
+class ExplainRequest(BaseModel):
+    signal_name: str = Field(..., description="e.g. 'Fingerprint Match'")
+    score: float      = Field(..., description="0-1 score")
+    badge: str        = Field(..., description="Human-readable badge text")
+    chart_data: list[dict] = Field(default_factory=list)
+    locality: str     = Field(..., description="Suburb name")
+    state: str        = Field(default="AU")
+    category: str     = Field(..., description="Franchise category")
+
+
+def _build_explain_prompt(req: ExplainRequest) -> str:
+    pct = round(req.score * 100)
+    rating = "strong" if req.score >= 0.65 else "moderate" if req.score >= 0.40 else "weak"
+
+    # Summarise chart_data into a compact readable form
+    chart_summary = ""
+    if req.chart_data:
+        items = req.chart_data[:8]
+        parts = []
+        for item in items:
+            # Support multiple key naming conventions
+            label = item.get("category") or item.get("label") or item.get("month") or str(item)
+            value = item.get("count") or item.get("value") or item.get("created") or ""
+            extra = ""
+            if item.get("closed") is not None:
+                extra = f" (closed: {item.get('closed')}, net: {item.get('net')})"
+            parts.append(f"{label}: {value}{extra}")
+        chart_summary = "; ".join(parts)
+
+    return f"""You are a concise location intelligence analyst for franchise expansion.
+A franchise founder is reviewing a deep-dive report for {req.locality}, {req.state} — they want to expand their {req.category} business there.
+
+They are looking at the **{req.signal_name}** signal card:
+- Score: {pct}/100 ({rating}) — badge: {req.badge}
+- Underlying data: {chart_summary if chart_summary else "no chart data available"}
+
+Write exactly 2-3 sentences in plain English that:
+1. Interpret what this specific score means for opening a {req.category} in {req.locality}
+2. Reference 1-2 concrete numbers from the data above if meaningful
+3. End with one practical implication or action the founder should take
+
+No bullet points. No headings. Speak directly to the founder as "you". Be specific and honest."""
+
+
+@router.post("/explain/stream")
+async def explain_signal_stream(req: ExplainRequest):
+    """
+    SSE stream — AI-generated plain-English explanation of one scoring signal.
+    Calls the LLM directly (NO tools) so the model only analyses the data
+    we supply and never tries to look up external information.
+    Events: {type: token, content} / {type: done, text} / {type: error}
+    """
+    _check_api_key()
+
+    # Import the raw LLM (no tools bound — avoids the agent trying to look up
+    # the suburb in its database tools and returning "couldn't find info")
+    from agents.graph import _llm as _base_llm
+    from langchain_cohere import ChatCohere
+    import os as _os
+
+    # Use a fresh LLM instance with slightly higher temperature for more
+    # natural prose, and NO tools bound to it.
+    _explain_llm = ChatCohere(
+        model="command-a-03-2025",
+        cohere_api_key=_os.environ.get("COHERE_API_KEY", ""),
+        temperature=0.3,
+    )
+
+    prompt = _build_explain_prompt(req)
+    messages = [HumanMessage(content=prompt)]
+
+    async def generate():
+        full_text = ""
+        try:
+            async for chunk in _explain_llm.astream(messages):
+                content = ""
+                raw = chunk.content
+                if isinstance(raw, str):
+                    content = raw
+                elif isinstance(raw, list):
+                    content = "".join(b.get("text", "") for b in raw if isinstance(b, dict))
+                if content:
+                    full_text += content
+                    yield f"data: {json.dumps({'type': 'token', 'content': content})}\n\n"
+        except Exception as exc:
+            yield f"data: {json.dumps({'type': 'error', 'detail': str(exc)})}\n\n"
+            return
+
+        yield f"data: {json.dumps({'type': 'done', 'text': full_text})}\n\n"
+
+    return StreamingResponse(
+        generate(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )

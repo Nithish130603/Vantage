@@ -49,6 +49,15 @@ function loadSaved(): Set<string> {
 function persistSaved(s: Set<string>) {
   localStorage.setItem("vantage_saved", JSON.stringify([...s]));
 }
+type SavedMeta = { h3_r7: string; locality: string; state: string; source: "exact_match" | "recommendation" | "avoid"; storeType: string };
+function loadSavedMeta(): Record<string, SavedMeta> {
+  if (typeof window === "undefined") return {};
+  try { return JSON.parse(localStorage.getItem("vantage_saved_meta") ?? "{}") as Record<string, SavedMeta>; }
+  catch { return {}; }
+}
+function persistSavedMeta(meta: Record<string, SavedMeta>) {
+  localStorage.setItem("vantage_saved_meta", JSON.stringify(meta));
+}
 
 // ── Sidebar nav items (Recommendations active) ────────────────────────────────
 
@@ -61,7 +70,7 @@ const NAV_ITEMS = [
     icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.2"/><line x1="10" y1="10" x2="14" y2="14" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/><line x1="4.5" y1="6.5" x2="8.5" y2="6.5" stroke="currentColor" strokeWidth="1.1"/><line x1="6.5" y1="4.5" x2="6.5" y2="8.5" stroke="currentColor" strokeWidth="1.1"/></svg> },
   { label: "Recommendations", active: true, path: "/recommendations",
     icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><polygon points="7.5,1 9.5,5.5 14.5,6 11,9.5 12,14.5 7.5,12 3,14.5 4,9.5 0.5,6 5.5,5.5" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round"/></svg> },
-  { label: "Avoid Zones", active: false, path: "/map",
+  { label: "Avoid Zones", active: false, path: "/avoid",
     icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><circle cx="7.5" cy="7.5" r="6" stroke="currentColor" strokeWidth="1.2"/><line x1="3" y1="3" x2="12" y2="12" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg> },
 ];
 
@@ -69,6 +78,9 @@ const NAV_ITEMS = [
 
 function VantageSidebar({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   const router = useRouter();
+  const [hasAnalysis, setHasAnalysis] = useState(false);
+  const [lockedNudge, setLockedNudge] = useState(false);
+  useEffect(() => { setHasAnalysis(!!sessionStorage.getItem("vantage_dna")); }, []);
   return (
     <motion.aside
       animate={{ width: open ? 218 : 60 }}
@@ -96,62 +108,69 @@ function VantageSidebar({ open, onToggle }: { open: boolean; onToggle: () => voi
             </motion.div>
           )}
         </AnimatePresence>
-        {!open && (
-          <div className="w-7 h-7 rounded flex items-center justify-center"
-            style={{ background: "rgba(0,210,230,0.1)", border: "1px solid rgba(0,210,230,0.3)" }}>
-            <svg width="13" height="13" viewBox="0 0 12 12" fill="none">
-              <circle cx="6" cy="6" r="2" fill="#0DC5CC"/>
-              <circle cx="6" cy="6" r="5" stroke="#0DC5CC" strokeWidth="0.8" strokeDasharray="2 1.5"/>
-            </svg>
-          </div>
-        )}
-        {open && (
-          <button onClick={onToggle}
-            className="w-7 h-7 rounded flex items-center justify-center transition-all"
-            style={{ color: "rgba(0,210,230,0.4)", border: "1px solid rgba(0,210,230,0.14)", background: "transparent" }}>
-            <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M7 2L4 5.5 7 9" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          </button>
-        )}
-      </div>
-      {!open && (
-        <button onClick={onToggle} className="flex items-center justify-center mx-auto mt-3 w-8 h-8 rounded transition-all"
-          style={{ color: "rgba(0,210,230,0.5)", border: "1px solid rgba(0,210,230,0.18)", background: "rgba(0,210,230,0.04)" }}>
-          <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M4 2l3 3.5-3 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
+        <button onClick={onToggle}
+          className="w-7 h-7 rounded flex items-center justify-center transition-all shrink-0"
+          style={{ color: "rgba(0,210,230,0.4)", border: "1px solid rgba(0,210,230,0.14)", background: "transparent" }}>
+          {open
+            ? <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M7 2L4 5.5 7 9" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            : <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M4 2l3 3.5-3 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          }
         </button>
-      )}
+      </div>
       {open && (
         <p className="px-5 pt-5 pb-2" style={{ fontSize: 10, letterSpacing: "0.25em", textTransform: "uppercase", color: "rgba(0,210,230,0.7)", fontWeight: 700 }}>
           Navigation
         </p>
       )}
       <nav className="flex-1 px-2 space-y-0.5 mt-1">
-        {NAV_ITEMS.map((item) => (
-          <div key={item.label} onClick={() => router.push(item.path)}
-            className="flex items-center rounded-sm transition-all duration-150 cursor-pointer"
-            style={{
-              gap: open ? 10 : 0, justifyContent: open ? "flex-start" : "center",
-              padding: open ? "9px 10px" : "9px 0",
-              background: item.active ? "rgba(0,210,230,0.08)" : "transparent",
-              borderLeft: item.active && open ? "2px solid rgba(0,210,230,0.7)" : "2px solid transparent",
-              color: item.active ? "#0DC5CC" : "rgba(200,230,235,0.85)",
-            }}>
-            <span style={{ opacity: item.active ? 1 : 0.65, flexShrink: 0 }}>{item.icon}</span>
-            <AnimatePresence>
-              {open && (
-                <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                  transition={{ duration: 0.1 }}
-                  style={{ fontSize: 14, letterSpacing: "0.04em", whiteSpace: "nowrap", fontWeight: item.active ? 700 : 600 }}>
-                  {item.label}
-                </motion.span>
+        {NAV_ITEMS.map((item) => {
+          const locked = !item.active && !hasAnalysis;
+          return (
+            <div key={item.label}
+              onClick={() => {
+                if (item.active) return;
+                if (locked) { setLockedNudge(true); setTimeout(() => setLockedNudge(false), 2400); return; }
+                router.push(item.path);
+              }}
+              className="flex items-center rounded-sm transition-all duration-150"
+              style={{
+                gap: open ? 10 : 0, justifyContent: open ? "flex-start" : "center",
+                padding: open ? "9px 10px" : "9px 0",
+                background: item.active ? "rgba(0,210,230,0.08)" : "transparent",
+                borderLeft: item.active && open ? "2px solid rgba(0,210,230,0.7)" : "2px solid transparent",
+                color: item.active ? "#0DC5CC" : locked ? "rgba(200,230,235,0.28)" : "rgba(200,230,235,0.85)",
+                cursor: item.active ? "default" : locked ? "not-allowed" : "pointer",
+                opacity: locked ? 0.45 : 1,
+              }}>
+              <span style={{ opacity: item.active ? 1 : locked ? 0.4 : 0.65, flexShrink: 0 }}>{item.icon}</span>
+              <AnimatePresence>
+                {open && (
+                  <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                    transition={{ duration: 0.1 }}
+                    style={{ fontSize: 14, letterSpacing: "0.04em", whiteSpace: "nowrap", fontWeight: item.active ? 700 : 600 }}>
+                    {item.label}
+                  </motion.span>
+                )}
+              </AnimatePresence>
+              {item.active && open && (
+                <motion.div className="ml-auto w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#0DC5CC" }}
+                  animate={{ opacity: [1, 0.3, 1] }} transition={{ duration: 1.8, repeat: Infinity }} />
               )}
-            </AnimatePresence>
-            {item.active && open && (
-              <motion.div className="ml-auto w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#0DC5CC" }}
-                animate={{ opacity: [1, 0.3, 1] }} transition={{ duration: 1.8, repeat: Infinity }} />
-            )}
-          </div>
-        ))}
+              {locked && open && (
+                <svg className="ml-auto" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                  <rect x="1.5" y="4.5" width="7" height="5" rx="1" stroke="rgba(0,210,230,0.25)" strokeWidth="1"/>
+                  <path d="M3 4.5V3a2 2 0 014 0v1.5" stroke="rgba(0,210,230,0.25)" strokeWidth="1" strokeLinecap="round"/>
+                </svg>
+              )}
+            </div>
+          );
+        })}
       </nav>
+      {lockedNudge && open && (
+        <div className="mx-3 mb-2 px-3 py-2 rounded-sm" style={{ background: "rgba(0,210,230,0.06)", border: "1px solid rgba(0,210,230,0.2)", fontSize: 11, color: "rgba(0,210,230,0.7)", fontFamily: "var(--font-geist-mono)", letterSpacing: "0.04em", lineHeight: 1.5 }}>
+          Run your first analysis on the Dashboard to unlock.
+        </div>
+      )}
       <AnimatePresence>
         {open && (
           <motion.div initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
@@ -293,11 +312,10 @@ function FilterPills({ filter, setFilter, tierCounts, totalScored, btbCount, sav
   tierCounts: Record<Tier, number>; totalScored: number; btbCount: number; savedCount: number;
 }) {
   const pills: { key: Filter; label: string; count: number; color: string }[] = [
-    { key: "ALL",              label: "All",                count: totalScored,              color: "rgba(180,190,205,0.7)" },
-    { key: "BETTER_THAN_BEST", label: "⭐ Better Than Best", count: btbCount,                color: TIER_COLOR.BETTER_THAN_BEST },
-    { key: "STRONG",           label: "Strong",             count: tierCounts.STRONG ?? 0,   color: TIER_COLOR.STRONG },
-    { key: "WATCH",            label: "Watch",              count: tierCounts.WATCH ?? 0,    color: TIER_COLOR.WATCH },
-    { key: "AVOID",            label: "Avoid",              count: tierCounts.AVOID ?? 0,    color: TIER_COLOR.AVOID },
+    { key: "ALL",              label: "All",                count: totalScored - (tierCounts.AVOID ?? 0), color: "rgba(180,190,205,0.7)" },
+    { key: "BETTER_THAN_BEST", label: "⭐ Better Than Best", count: btbCount,                             color: TIER_COLOR.BETTER_THAN_BEST },
+    { key: "STRONG",           label: "Strong",             count: tierCounts.STRONG ?? 0,               color: TIER_COLOR.STRONG },
+    { key: "WATCH",            label: "Watch",              count: tierCounts.WATCH ?? 0,                color: TIER_COLOR.WATCH },
     ...(savedCount > 0 ? [{ key: "SAVED" as Filter, label: "Saved", count: savedCount, color: "#E8C547" }] : []),
   ];
   return (
@@ -352,11 +370,19 @@ function RecommendationsContent() {
   const [savedH3s, setSavedH3s]       = useState<Set<string>>(loadSaved);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
-  const toggleSave = useCallback((h3_r7: string) => {
+  const toggleSave = useCallback((h3_r7: string, locality: string, state: string) => {
     setSavedH3s((prev) => {
       const next = new Set(prev);
-      next.has(h3_r7) ? next.delete(h3_r7) : next.add(h3_r7);
+      const meta = loadSavedMeta();
+      if (next.has(h3_r7)) {
+        next.delete(h3_r7);
+        delete meta[h3_r7];
+      } else {
+        next.add(h3_r7);
+        meta[h3_r7] = { h3_r7, locality, state, source: "recommendation", storeType: (typeof sessionStorage !== "undefined" ? sessionStorage.getItem("vantage_category") : null) ?? "" };
+      }
       persistSaved(next);
+      persistSavedMeta(meta);
       return next;
     });
   }, []);
@@ -400,12 +426,15 @@ function RecommendationsContent() {
   // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // Recommendations excludes AVOID tier — those have a dedicated /avoid screen
+  const recResults = useMemo(() => results.filter((r) => r.tier !== "AVOID"), [results]);
+
   const visibleResults =
-    filter === "ALL"              ? results
-    : filter === "SAVED"          ? results.filter((r) => savedH3s.has(r.h3_r7))
-    : filter === "BETTER_THAN_BEST" ? results.filter((r) => r.tier === "BETTER_THAN_BEST")
-    : filter === "EXACT_MATCH"    ? results
-    : results.filter((r) => r.tier === filter);
+    filter === "ALL"              ? recResults
+    : filter === "SAVED"          ? recResults.filter((r) => savedH3s.has(r.h3_r7))
+    : filter === "BETTER_THAN_BEST" ? recResults.filter((r) => r.tier === "BETTER_THAN_BEST")
+    : filter === "EXACT_MATCH"    ? recResults
+    : recResults.filter((r) => r.tier === filter);
 
   const showBtbEmpty   = !loading && !error && filter === "BETTER_THAN_BEST" && visibleResults.length === 0;
   const showSavedEmpty = !loading && !error && filter === "SAVED" && visibleResults.length === 0;
@@ -538,7 +567,7 @@ function RecommendationsContent() {
                         </span>
                         <span style={{ fontSize: 9, color: "rgba(255,255,255,0.35)", fontFamily: "var(--font-geist-mono)", letterSpacing: "0.12em", fontWeight: 700 }}>SCORE</span>
                       </div>
-                      <BookmarkBtn saved={isSaved} onToggle={() => toggleSave(r.h3_r7)} />
+                      <BookmarkBtn saved={isSaved} onToggle={() => toggleSave(r.h3_r7, r.locality, r.state)} />
                     </div>
                   </motion.div>
                 );
@@ -552,7 +581,7 @@ function RecommendationsContent() {
             <div style={{ position: "absolute", top: 10, right: 10, width: 16, height: 16, borderTop: "1px solid rgba(0,210,230,0.35)", borderRight: "1px solid rgba(0,210,230,0.35)", zIndex: 5, pointerEvents: "none" }} />
             {!loading && (
               <OpportunityMap
-                results={results}
+                results={recResults}
                 selected={selected}
                 onSelect={setSelected}
                 filter={filter}
@@ -603,7 +632,7 @@ function RecommendationsContent() {
                   </div>
                   <div style={{ display: "flex", alignItems: "center", gap: 10, flexShrink: 0 }}>
                     <button
-                      onClick={() => toggleSave(selected.h3_r7)}
+                      onClick={() => toggleSave(selected.h3_r7, selected.locality, selected.state)}
                       style={{ display: "flex", alignItems: "center", gap: 6, padding: "8px 12px", borderRadius: 10, border: "1px solid rgba(255,255,255,0.08)", color: savedH3s.has(selected.h3_r7) ? "#E8C547" : "rgba(140,155,175,0.6)", background: "none", cursor: "pointer", fontSize: 12, fontWeight: 500 }}>
                       {savedH3s.has(selected.h3_r7) ? <><BookmarkCheck size={13} fill="#E8C547" /> Saved</> : <><Bookmark size={13} /> Save</>}
                     </button>
@@ -626,7 +655,7 @@ function RecommendationsContent() {
         savedH3s={[...savedH3s]}
         category={category}
         fingerprintResult={dna as Record<string, unknown>}
-        savedNames={Object.fromEntries(results.filter((r) => savedH3s.has(r.h3_r7)).map((r) => [r.h3_r7, `${r.locality}, ${r.state}`]))}
+        savedNames={Object.fromEntries(Object.entries(loadSavedMeta()).map(([h3, m]) => [h3, `${m.locality}, ${m.state}`]))}
       />
     </div>
   );

@@ -29,6 +29,11 @@ export interface FingerprintResponse {
   unrecognised_suburbs: string[];
   resolved_suburbs: Record<string, string>;
   client_mean_gold_similarity: number;
+  explainer_dna: string;
+  explainer_opportunities: string;
+  explainer_comparison: string;
+  explainer_locations: string;
+  explainer_risk: string;
 }
 
 export interface SuburbResult {
@@ -72,6 +77,7 @@ export interface SignalDetail {
   description: string;
   badge: string;
   chart_data: Record<string, unknown>[];
+  signal_insight: string;
 }
 
 export interface LocationDetail {
@@ -88,6 +94,7 @@ export interface LocationDetail {
   competitor_count: number;
   cluster_gap_description: string;
   recommendation: string;
+  ai_recommendation: string;
   monthly_series: Record<string, unknown>[];
   signals: SignalDetail[];
   top_categories: { category: string; count: number }[];
@@ -236,6 +243,76 @@ export const api = {
     );
   },
 
+  locationPost(
+    h3r7: string,
+    opts: { category: string; successVector?: number[] | null; failureVector?: number[] | null }
+  ): Promise<LocationDetail> {
+    return json<LocationDetail>(`${BASE}/location/${h3r7}`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        category: opts.category,
+        success_vector: opts.successVector ?? null,
+        failure_vector: opts.failureVector ?? null,
+      }),
+    });
+  },
+
+  explainStream(
+    req: {
+      signal_name: string;
+      score: number;
+      badge: string;
+      chart_data: Record<string, unknown>[];
+      locality: string;
+      state: string;
+      category: string;
+    },
+    onToken: (token: string) => void,
+    onDone: (text: string) => void,
+    onError: (detail: string) => void,
+  ): () => void {
+    const controller = new AbortController();
+    (async () => {
+      try {
+        const res = await fetch(`${BASE}/agent/explain/stream`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(req),
+          signal: controller.signal,
+        });
+        if (!res.ok) {
+          const text = await res.text().catch(() => res.statusText);
+          onError(`API ${res.status}: ${text}`);
+          return;
+        }
+        const reader = res.body!.getReader();
+        const decoder = new TextDecoder();
+        let buffer = "";
+        let fullText = "";
+        while (true) {
+          const { done, value } = await reader.read();
+          if (done) break;
+          buffer += decoder.decode(value, { stream: true });
+          const lines = buffer.split("\n");
+          buffer = lines.pop() ?? "";
+          for (const line of lines) {
+            if (!line.startsWith("data: ")) continue;
+            try {
+              const event = JSON.parse(line.slice(6));
+              if (event.type === "token") { onToken(event.content); fullText += event.content; }
+              else if (event.type === "done") onDone(event.text || fullText);
+              else if (event.type === "error") onError(event.detail);
+            } catch { /* ignore parse errors */ }
+          }
+        }
+      } catch (e) {
+        if ((e as Error).name !== "AbortError") onError(String(e));
+      }
+    })();
+    return () => controller.abort();
+  },
+
   embedding(category?: string): Promise<EmbeddingPoint[]> {
     const params = category ? `?category=${encodeURIComponent(category)}` : "";
     return json<EmbeddingPoint[]>(`${BASE}/embedding${params}`);
@@ -326,6 +403,13 @@ export const api = {
     scanScore?: number,
     isBtb?: boolean,
     btbReason?: string | null,
+    opts?: {
+      successVector?: number[] | null;
+      failureVector?: number[] | null;
+      savedSuburbs?: { h3_r7: string; locality: string; state: string; score?: number }[];
+      dnaSummary?: string | null;
+      topCategories?: { category: string; weight: number }[] | null;
+    },
   ): Promise<void> {
     const res = await fetch(`${BASE}/report/pdf`, {
       method: "POST",
@@ -336,6 +420,11 @@ export const api = {
         ...(scanScore != null && { scan_score: scanScore }),
         ...(isBtb != null    && { is_btb: isBtb }),
         ...(btbReason        && { btb_reason: btbReason }),
+        ...(opts?.successVector  && { success_vector: opts.successVector }),
+        ...(opts?.failureVector  && { failure_vector: opts.failureVector }),
+        ...(opts?.savedSuburbs?.length && { saved_suburbs: opts.savedSuburbs }),
+        ...(opts?.dnaSummary     && { dna_summary: opts.dnaSummary }),
+        ...(opts?.topCategories  && { top_categories: opts.topCategories }),
       }),
     });
     if (!res.ok) {
@@ -347,7 +436,7 @@ export const api = {
     const a = document.createElement("a");
     a.href = url;
     const name = locality ? `${locality.replace(/\s+/g, "_")}_${state ?? "AU"}` : h3r7;
-    a.download = `Location_Report_${name}_${category.replace(/\s+/g, "_")}.pdf`;
+    a.download = `Vantage_${name}_${category.replace(/\s+/g, "_")}.pdf`;
     a.click();
     URL.revokeObjectURL(url);
   },

@@ -33,6 +33,7 @@ from sklearn.feature_extraction.text import TfidfVectorizer
 from state import state
 from routers import fingerprint, scan, location, embedding, report, places, categories
 from routers.agent import router as agent_router
+from routers.user import router as user_router
 
 BASE_DIR = Path(__file__).parent
 log = logging.getLogger("vantage")
@@ -235,6 +236,7 @@ app.include_router(report.router)
 app.include_router(places.router)
 app.include_router(categories.router)
 app.include_router(agent_router)
+app.include_router(user_router)
 
 
 @app.get("/health")

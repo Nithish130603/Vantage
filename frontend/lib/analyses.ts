@@ -25,7 +25,7 @@ export async function saveAnalysis(
     .select()
     .single();
 
-  if (error) { console.error("saveAnalysis:", error); return null; }
+  if (error) return null;
   return data as Analysis;
 }
 
@@ -36,7 +36,7 @@ export async function listAnalyses(): Promise<Analysis[]> {
     .select("*")
     .order("created_at", { ascending: false });
 
-  if (error) { console.error("listAnalyses:", error); return []; }
+  if (error) return [];
   return (data ?? []) as Analysis[];
 }
 

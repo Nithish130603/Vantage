@@ -9,15 +9,43 @@ interface Props {
   open: boolean;
   onClose: () => void;
   onSuccess?: () => void;
+  onGuest?: () => void;
 }
 
-export default function AuthModal({ open, onClose, onSuccess }: Props) {
+export default function AuthModal({ open, onClose, onSuccess, onGuest }: Props) {
   const [mode, setMode] = useState<"signin" | "signup">("signin");
+  const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [sent, setSent] = useState(false);
+
+  function switchMode(next: "signin" | "signup") {
+    setMode(next);
+    setError(null);
+  }
+
+  function friendlyError(err: unknown, currentMode: "signin" | "signup"): string {
+    const msg = err instanceof Error ? err.message : String(err);
+    const lower = msg.toLowerCase();
+    if (lower.includes("rate") || (lower.includes("email") && lower.includes("limit"))) {
+      if (currentMode === "signup") {
+        return "rate_limit_signup";
+      }
+      return "Too many requests — please wait a few minutes, then try again.";
+    }
+    if (lower.includes("invalid login") || lower.includes("invalid credentials") || lower.includes("wrong password")) {
+      return "Incorrect email or password.";
+    }
+    if (lower.includes("user already registered") || lower.includes("already been registered")) {
+      return "rate_limit_signup";
+    }
+    if (lower.includes("email not confirmed")) {
+      return "Please confirm your email first — check your inbox for a verification link.";
+    }
+    return msg || "Authentication failed";
+  }
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
@@ -30,16 +58,38 @@ export default function AuthModal({ open, onClose, onSuccess }: Props) {
         onSuccess?.();
         onClose();
       } else {
-        const { error } = await supabase.auth.signUp({ email, password });
+        const { error } = await supabase.auth.signUp({
+          email,
+          password,
+          options: { data: { full_name: name.trim() } },
+        });
         if (error) throw error;
         setSent(true);
       }
     } catch (err) {
-      setError(err instanceof Error ? err.message : "Authentication failed");
+      const msg = friendlyError(err, mode);
+      if (msg === "rate_limit_signup") {
+        switchMode("signin");
+        setError("Your account may already exist — sign in with your password below. (Sign-up email limit reached.)");
+      } else {
+        setError(msg);
+      }
     } finally {
       setLoading(false);
     }
   }
+
+  function handleGuest() {
+    onGuest?.();
+    onClose();
+  }
+
+  const inputStyle = {
+    background: "rgba(255,255,255,0.04)",
+    border: "1px solid rgba(255,255,255,0.08)",
+    borderRadius: 8,
+    padding: "10px 12px",
+  };
 
   return (
     <AnimatePresence>
@@ -91,6 +141,25 @@ export default function AuthModal({ open, onClose, onSuccess }: Props) {
                 </div>
               ) : (
                 <form onSubmit={handleSubmit} className="space-y-4">
+
+                  {/* Name — sign-up only */}
+                  {mode === "signup" && (
+                    <div>
+                      <label className="block text-xs text-[#8B8B99] mb-1.5">Your name</label>
+                      <input
+                        type="text"
+                        value={name}
+                        onChange={(e) => setName(e.target.value)}
+                        required
+                        placeholder="Jane Smith"
+                        className="w-full text-sm outline-none text-[#F0F0F2] placeholder:text-[#3A3A4A]"
+                        style={inputStyle}
+                        onFocus={(e) => (e.target.style.borderColor = "#0D7377")}
+                        onBlur={(e) => (e.target.style.borderColor = "rgba(255,255,255,0.08)")}
+                      />
+                    </div>
+                  )}
+
                   <div>
                     <label className="block text-xs text-[#8B8B99] mb-1.5">Email</label>
                     <input
@@ -100,12 +169,7 @@ export default function AuthModal({ open, onClose, onSuccess }: Props) {
                       required
                       placeholder="you@yourfranchise.com"
                       className="w-full text-sm outline-none text-[#F0F0F2] placeholder:text-[#3A3A4A]"
-                      style={{
-                        background: "rgba(255,255,255,0.04)",
-                        border: "1px solid rgba(255,255,255,0.08)",
-                        borderRadius: 8,
-                        padding: "10px 12px",
-                      }}
+                      style={inputStyle}
                       onFocus={(e) => (e.target.style.borderColor = "#0D7377")}
                       onBlur={(e) => (e.target.style.borderColor = "rgba(255,255,255,0.08)")}
                     />
@@ -121,12 +185,7 @@ export default function AuthModal({ open, onClose, onSuccess }: Props) {
                       minLength={8}
                       placeholder="Min 8 characters"
                       className="w-full text-sm outline-none text-[#F0F0F2] placeholder:text-[#3A3A4A]"
-                      style={{
-                        background: "rgba(255,255,255,0.04)",
-                        border: "1px solid rgba(255,255,255,0.08)",
-                        borderRadius: 8,
-                        padding: "10px 12px",
-                      }}
+                      style={inputStyle}
                       onFocus={(e) => (e.target.style.borderColor = "#0D7377")}
                       onBlur={(e) => (e.target.style.borderColor = "rgba(255,255,255,0.08)")}
                     />
@@ -153,12 +212,43 @@ export default function AuthModal({ open, onClose, onSuccess }: Props) {
                     {mode === "signin" ? "Don't have an account?" : "Already have an account?"}{" "}
                     <button
                       type="button"
-                      onClick={() => { setMode(mode === "signin" ? "signup" : "signin"); setError(null); }}
+                      onClick={() => switchMode(mode === "signin" ? "signup" : "signin")}
                       className="text-[#0D7377] hover:underline"
                     >
                       {mode === "signin" ? "Sign up" : "Sign in"}
                     </button>
                   </p>
+
+                  {/* Guest option — sign-in screen only */}
+                  {mode === "signin" && (
+                    <>
+                      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                        <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.06)" }} />
+                        <span style={{ fontSize: 10, color: "#3A3A4A", letterSpacing: "0.08em" }}>or</span>
+                        <div style={{ flex: 1, height: 1, background: "rgba(255,255,255,0.06)" }} />
+                      </div>
+                      <button
+                        type="button"
+                        onClick={handleGuest}
+                        className="w-full py-2.5 rounded-lg text-sm font-medium transition-all"
+                        style={{
+                          background: "transparent",
+                          border: "1px solid rgba(255,255,255,0.08)",
+                          color: "#8B8B99",
+                        }}
+                        onMouseEnter={(e) => {
+                          e.currentTarget.style.borderColor = "rgba(255,255,255,0.18)";
+                          e.currentTarget.style.color = "#C8C8D4";
+                        }}
+                        onMouseLeave={(e) => {
+                          e.currentTarget.style.borderColor = "rgba(255,255,255,0.08)";
+                          e.currentTarget.style.color = "#8B8B99";
+                        }}
+                      >
+                        Continue as Guest
+                      </button>
+                    </>
+                  )}
                 </form>
               )}
             </div>

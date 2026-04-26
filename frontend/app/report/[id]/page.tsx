@@ -1,19 +1,8 @@
 "use client";
 
-import { useEffect, useState, Suspense } from "react";
+import { useEffect, useState, useRef, Suspense } from "react";
 import { useParams, useSearchParams, useRouter } from "next/navigation";
-import { motion } from "framer-motion";
-import {
-  ComposedChart,
-  Bar,
-  Line,
-  XAxis,
-  YAxis,
-  Tooltip,
-  ReferenceLine,
-  Legend,
-  ResponsiveContainer,
-} from "recharts";
+import { motion, AnimatePresence } from "framer-motion";
 import {
   api,
   type LocationDetail,
@@ -23,10 +12,12 @@ import {
   type Tier,
 } from "@/lib/api";
 import { ArrowLeft, Download, TrendingUp, AlertTriangle, CheckCircle, Info, ChevronDown } from "lucide-react";
-import SignalCard from "@/components/charts/SignalCard";
+import SignalCard, { SIGNAL_PALETTE } from "@/components/charts/SignalCard";
 import dynamic from "next/dynamic";
 
 const ChatWidget = dynamic(() => import("@/components/ui/ChatWidget"), { ssr: false });
+const VenueGrowthChart = dynamic(() => import("@/components/charts/VenueGrowthChart"), { ssr: false });
+const SignalRadar = dynamic(() => import("@/components/charts/SignalRadar"), { ssr: false });
 
 // ── Tier helpers ──────────────────────────────────────────────────────────────
 
@@ -119,6 +110,124 @@ function buildRecommendation(detail: LocationDetail, score100: number): string {
   return `${fpText}, and ${trajText}. ${compText}. ${divText}, while ${riskText}. ${verdict}`;
 }
 
+// ── Report loading overlay ────────────────────────────────────────────────────
+const REPORT_LOADING_MESSAGES = [
+  "Pulling suburb profile & venue data…",
+  "Matching your DNA against local businesses…",
+  "Charting 24 months of venue growth…",
+  "Scoring fingerprint match…",
+  "Counting direct competitors nearby…",
+  "Mapping the local business ecosystem…",
+  "Scanning for risk signals & closures…",
+  "Compiling Key Insights…",
+];
+
+function ReportLoadingOverlay() {
+  const [msgIdx, setMsgIdx] = useState(0);
+  const [progress, setProgress] = useState(0);
+  const canvasRef = useRef<HTMLCanvasElement>(null);
+
+  useEffect(() => {
+    const id = setInterval(() => {
+      setMsgIdx((i) => (i + 1) % REPORT_LOADING_MESSAGES.length);
+      setProgress((p) => Math.min(p + 100 / REPORT_LOADING_MESSAGES.length, 95));
+    }, 1200);
+    return () => clearInterval(id);
+  }, []);
+
+  useEffect(() => {
+    const canvas = canvasRef.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+    canvas.width = window.innerWidth;
+    canvas.height = window.innerHeight;
+    let t = 0, raf: number;
+    const NODES = Array.from({ length: 18 }, () => ({
+      x: Math.random() * canvas.width,
+      y: Math.random() * canvas.height,
+      vx: (Math.random() - 0.5) * 0.4,
+      vy: (Math.random() - 0.5) * 0.4,
+    }));
+    function draw() {
+      if (!ctx || !canvas) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      for (const n of NODES) {
+        n.x += n.vx; n.y += n.vy;
+        if (n.x < 0 || n.x > canvas.width) n.vx *= -1;
+        if (n.y < 0 || n.y > canvas.height) n.vy *= -1;
+      }
+      for (let i = 0; i < NODES.length; i++) {
+        for (let j = i + 1; j < NODES.length; j++) {
+          const dx = NODES[i].x - NODES[j].x, dy = NODES[i].y - NODES[j].y;
+          const dist = Math.sqrt(dx * dx + dy * dy);
+          if (dist < 220) {
+            ctx.beginPath(); ctx.moveTo(NODES[i].x, NODES[i].y); ctx.lineTo(NODES[j].x, NODES[j].y);
+            ctx.strokeStyle = `rgba(0,210,230,${(1 - dist / 220) * 0.18})`; ctx.lineWidth = 0.7; ctx.stroke();
+          }
+        }
+      }
+      for (const n of NODES) {
+        const pulse = 1 + 0.3 * Math.sin(t * 0.05 + n.x);
+        ctx.beginPath(); ctx.arc(n.x, n.y, 2.5 * pulse, 0, Math.PI * 2);
+        ctx.fillStyle = "rgba(0,210,230,0.55)"; ctx.fill();
+      }
+      t++; raf = requestAnimationFrame(draw);
+    }
+    draw();
+    return () => cancelAnimationFrame(raf);
+  }, []);
+
+  return (
+    <motion.div
+      initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }} transition={{ duration: 0.4 }}
+      className="fixed inset-0 z-50 flex flex-col items-center justify-center"
+      style={{ backgroundColor: "rgba(2,5,9,0.97)", fontFamily: "var(--font-geist-mono)" }}
+    >
+      <canvas ref={canvasRef} className="absolute inset-0 w-full h-full" />
+      {[{ top: 24, left: 24 }, { top: 24, right: 24 }, { bottom: 24, left: 24 }, { bottom: 24, right: 24 }].map((pos, i) => (
+        <div key={i} className="absolute pointer-events-none" style={{ ...pos, width: 28, height: 28 }}>
+          <svg width="28" height="28" viewBox="0 0 28 28" fill="none">
+            {i === 0 && <path d="M0 14V0H14" stroke="rgba(0,210,230,0.4)" strokeWidth="1" />}
+            {i === 1 && <path d="M28 14V0H14" stroke="rgba(0,210,230,0.4)" strokeWidth="1" />}
+            {i === 2 && <path d="M0 14V28H14" stroke="rgba(0,210,230,0.4)" strokeWidth="1" />}
+            {i === 3 && <path d="M28 14V28H14" stroke="rgba(0,210,230,0.4)" strokeWidth="1" />}
+          </svg>
+        </div>
+      ))}
+      <div className="relative z-10 flex flex-col items-center gap-8 px-8 text-center max-w-md">
+        <div className="relative w-20 h-20 flex items-center justify-center">
+          <motion.div className="absolute inset-0 rounded-full" style={{ border: "1px solid rgba(0,210,230,0.5)" }}
+            animate={{ scale: [1, 1.4, 1], opacity: [0.6, 0, 0.6] }} transition={{ duration: 2.2, repeat: Infinity }} />
+          <motion.div className="absolute inset-2 rounded-full" style={{ border: "1px solid rgba(0,210,230,0.3)" }}
+            animate={{ scale: [1, 1.25, 1], opacity: [0.4, 0, 0.4] }} transition={{ duration: 2.2, repeat: Infinity, delay: 0.4 }} />
+          <div className="w-4 h-4 rounded-full" style={{ backgroundColor: "#0DC5CC", boxShadow: "0 0 20px rgba(13,197,204,0.8)" }} />
+        </div>
+        <div>
+          <p className="text-[11px] tracking-[0.3em] text-white/40 uppercase mb-3">Location Intelligence · Processing</p>
+          <AnimatePresence mode="wait">
+            <motion.p key={msgIdx} initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+              transition={{ duration: 0.35 }} className="text-[15px] tracking-[0.08em]" style={{ color: "#0DC5CC" }}>
+              {REPORT_LOADING_MESSAGES[msgIdx]}
+            </motion.p>
+          </AnimatePresence>
+        </div>
+        <div className="w-64 h-px relative" style={{ background: "rgba(255,255,255,0.06)" }}>
+          <motion.div className="absolute inset-y-0 left-0 h-full"
+            style={{ background: "linear-gradient(to right, #0D7377, #0DC5CC)", boxShadow: "0 0 8px rgba(13,197,204,0.6)" }}
+            animate={{ width: `${progress}%` }} transition={{ duration: 0.5 }} />
+        </div>
+        <p className="text-[11px] tracking-[0.2em] text-white/30 uppercase">
+          {msgIdx + 1} / {REPORT_LOADING_MESSAGES.length}
+        </p>
+      </div>
+      <motion.div className="absolute inset-x-0 h-px pointer-events-none"
+        style={{ background: "linear-gradient(to right, transparent 0%, rgba(0,210,230,0.4) 50%, transparent 100%)" }}
+        animate={{ top: ["5%", "95%", "5%"] }} transition={{ duration: 6, repeat: Infinity, ease: "linear" }} />
+    </motion.div>
+  );
+}
+
 // ── Design tokens ─────────────────────────────────────────────────────────────
 
 const T = {
@@ -190,7 +299,7 @@ function KeyInsights({
                   <div>
                     <p style={{ fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 4 }}>{s.name}</p>
                     <p style={{ fontSize: 13, color: T.textMid, lineHeight: 1.6, fontWeight: 500 }}>
-                      {signalInsight(s).split(" — ")[0]}
+                      {s.signal_insight || signalInsight(s).split(" — ")[0]}
                     </p>
                   </div>
                 </div>
@@ -219,7 +328,7 @@ function KeyInsights({
                   <div>
                     <p style={{ fontSize: 14, fontWeight: 700, color: T.text, marginBottom: 4 }}>{s.name}</p>
                     <p style={{ fontSize: 13, color: T.textMid, lineHeight: 1.6, fontWeight: 500 }}>
-                      {signalInsight(s).split(" — ")[0]}
+                      {s.signal_insight || signalInsight(s).split(" — ")[0]}
                     </p>
                   </div>
                 </div>
@@ -287,7 +396,7 @@ function ConclusionCard({
         ? `${detail.locality} shows potential but requires monitoring. Enter only if you can differentiate clearly from existing competition.`
         : `${detail.locality} does not meet the threshold for ${detail.category} expansion at this time. Elevated risk signals and a weak DNA match make this a low-priority location.`;
 
-  const rec = detail.recommendation || buildRecommendation(detail, displayScore);
+  const rec = detail.ai_recommendation || detail.recommendation || buildRecommendation(detail, displayScore);
 
   return (
     <div style={{ borderRadius: 16, padding: "24px 26px", marginBottom: 32, background: `${verdictColor}08`, border: `1px solid ${verdictColor}28`, position: "relative", overflow: "hidden" }}>
@@ -333,6 +442,22 @@ function ReportContent() {
     }
   })();
 
+  // Extract user's DNA vectors from sessionStorage for personalised scores
+  const successVector = (() => {
+    try {
+      const dna = JSON.parse(ss?.getItem("vantage_dna") ?? "null");
+      const v = dna?.success_vector;
+      return Array.isArray(v) ? (v as number[]) : null;
+    } catch { return null; }
+  })();
+  const failureVector = (() => {
+    try {
+      const dna = JSON.parse(ss?.getItem("vantage_dna") ?? "null");
+      const v = dna?.failure_vector;
+      return Array.isArray(v) ? (v as number[]) : null;
+    } catch { return null; }
+  })();
+
   const [detail, setDetail] = useState<LocationDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [downloading, setDownloading] = useState(false);
@@ -340,23 +465,59 @@ function ReportContent() {
   const [error, setError] = useState<string | null>(null);
   const [expandedSignals, setExpandedSignals] = useState<Set<number>>(new Set([0]));
 
+  // Per-signal AI explain state: { [signalIndex]: { text, loading, error } }
+  const [explainState, setExplainState] = useState<Record<number, { text: string; loading: boolean; error?: string }>>({});
+  // Venue mix AI explain state
+  const [venueMixExplain, setVenueMixExplain] = useState<{ text: string; loading: boolean; error?: string; open: boolean }>({ text: "", loading: false, open: false });
+
   useEffect(() => {
     if (!id) return;
+    // Always use the personalised POST endpoint so fingerprint score reflects the user's actual DNA
     api
-      .location(id, category)
+      .locationPost(id, { category, successVector, failureVector })
       .then(setDetail)
       .catch((e: Error) => setError(e.message))
       .finally(() => setLoading(false));
-  }, [id, category]);
+  }, [id, category]); // eslint-disable-line react-hooks/exhaustive-deps
 
   const handleDownload = async () => {
     if (!id || !detail) return;
     setDownloading(true);
     setDownloadError(null);
     try {
+      // Gather saved suburbs from localStorage for comparison table
+      const savedH3s: string[] = (() => {
+        try { return JSON.parse(localStorage.getItem("vantage_saved") ?? "[]") as string[]; }
+        catch { return []; }
+      })();
+      const savedMeta: Record<string, { h3_r7: string; locality: string; state: string; storeType?: string }> = (() => {
+        try { return JSON.parse(localStorage.getItem("vantage_saved_meta") ?? "{}"); }
+        catch { return {}; }
+      })();
+      const savedSuburbs = savedH3s
+        .filter((h) => h !== id && (savedMeta[h]?.storeType ?? "") === (category ?? ""))
+        .slice(0, 5)
+        .map((h) => ({
+          h3_r7: h,
+          locality: savedMeta[h]?.locality ?? h,
+          state: savedMeta[h]?.state ?? "AU",
+        }));
+
+      const dna = (() => {
+        try { return JSON.parse(ss?.getItem("vantage_dna") ?? "{}"); }
+        catch { return {}; }
+      })();
+
       await api.downloadReport(
         id, category, displayLocality, displayState,
         displayScore, isBtbFromUrl, btbReason,
+        {
+          successVector,
+          failureVector,
+          savedSuburbs,
+          dnaSummary: (dna.dna_summary as string | null) ?? null,
+          topCategories: (dna.top_categories as { category: string; weight: number }[] | null) ?? null,
+        },
       );
     } catch (e) {
       setDownloadError(e instanceof Error ? e.message : "PDF generation failed. Please try again.");
@@ -434,17 +595,9 @@ function ReportContent() {
       <div style={{ maxWidth: 1100, margin: "0 auto", padding: "36px 40px 0" }}>
 
         {/* ── Loading ────────────────────────────────────────────────────────── */}
-        {loading && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 16 }}>
-            <div className="skeleton" style={{ height: 48, width: 320, borderRadius: 10 }} />
-            <div className="skeleton" style={{ height: 24, width: 200, borderRadius: 8 }} />
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginTop: 8 }}>
-              {Array.from({ length: 6 }).map((_, i) => (
-                <div key={i} className="skeleton" style={{ height: 80, borderRadius: 12 }} />
-              ))}
-            </div>
-          </div>
-        )}
+        <AnimatePresence>
+          {loading && <ReportLoadingOverlay />}
+        </AnimatePresence>
 
         {/* ── Partial load ───────────────────────────────────────────────────── */}
         {isPartialLoad && displayScore > 0 && (
@@ -456,7 +609,6 @@ function ReportContent() {
               displayTier={displayTier}
               tierColor={tierColor}
               btbReason={btbReason}
-              h3id={id ?? ""}
               venueCount={null}
               dataConfidence={null}
             />
@@ -500,7 +652,6 @@ function ReportContent() {
               displayTier={displayTier}
               tierColor={tierColor}
               btbReason={btbReason}
-              h3id={detail.h3_r7}
               venueCount={detail.venue_count}
               dataConfidence={detail.data_confidence}
             />
@@ -514,72 +665,43 @@ function ReportContent() {
               {/* Trajectory chart — full width */}
               {(() => {
                 const traj = detail.signals.find((s) => s.name === "Market Trajectory");
-                const chartData = traj?.chart_data ?? [];
+                const chartData = (traj?.chart_data ?? []) as { month: string; created?: number; closed?: number; net?: number; count?: number }[];
                 return (
-                  <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: "20px 24px" }}>
-                    <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", marginBottom: 6 }}>
-                      <div>
-                        <p style={{ fontFamily: T.serif, fontSize: 20, fontWeight: 400, color: T.text, marginBottom: 4 }}>
-                          24-Month Venue Growth
-                        </p>
-                        <p style={{ fontSize: 12, color: T.textDim, fontWeight: 500 }}>
-                          Opened vs Closed (Aggregate Data)
-                        </p>
-                      </div>
+                  <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: "20px 24px", position: "relative", overflow: "hidden" }}>
+                    <div style={{ position: "absolute", top: -40, right: -40, width: 160, height: 160, borderRadius: "50%", background: "radial-gradient(circle, rgba(13,197,204,0.07) 0%, transparent 70%)", pointerEvents: "none" }} />
+                    <div style={{ marginBottom: 16 }}>
+                      <p style={{ fontFamily: T.serif, fontSize: 20, fontWeight: 400, color: T.text, marginBottom: 4 }}>
+                        24-Month Venue Growth
+                      </p>
+                      <p style={{ fontSize: 12, color: T.textDim, fontWeight: 500 }}>
+                        Opened vs Closed (Aggregate Data)
+                      </p>
                     </div>
                     {chartData.length === 0 ? (
                       <p style={{ fontSize: 13, color: T.textDim, padding: "24px 0", textAlign: "center", fontWeight: 500 }}>
                         Insufficient historical data for this suburb
                       </p>
                     ) : (
-                      <>
-                        <ResponsiveContainer width="100%" height={180}>
-                          <ComposedChart data={chartData} margin={{ left: 0, right: 8, top: 8, bottom: 0 }}>
-                            <XAxis
-                              dataKey="month"
-                              tick={{ fontSize: 10, fill: "rgba(150,175,190,0.55)", fontWeight: 600 }}
-                              axisLine={false} tickLine={false}
-                              interval="preserveStartEnd"
-                            />
-                            <YAxis
-                              tick={{ fontSize: 10, fill: "rgba(150,175,190,0.55)", fontWeight: 600 }}
-                              axisLine={false} tickLine={false} width={28}
-                            />
-                            <ReferenceLine y={0} stroke="rgba(0,210,230,0.08)" />
-                            <Tooltip
-                              contentStyle={{ background: "rgba(2,5,12,0.97)", border: `1px solid ${T.border}`, borderRadius: 8, fontSize: 12, fontWeight: 600 }}
-                              formatter={(val, name) => {
-                                const label = name === "created" ? "Opened" : name === "closed" ? "Closed" : "Net change";
-                                return [val, label];
-                              }}
-                            />
-                            <Legend
-                              wrapperStyle={{ fontSize: 11, color: T.textDim, paddingTop: 10, fontWeight: 600 }}
-                              formatter={(value) => value === "created" ? "Opened" : value === "closed" ? "Closed" : "Net change"}
-                            />
-                            <Bar dataKey="created" fill={T.teal} fillOpacity={0.65} radius={[2, 2, 0, 0]} name="created" />
-                            <Bar dataKey="closed" fill={T.red} fillOpacity={0.55} radius={[2, 2, 0, 0]} name="closed" />
-                            <Line type="monotone" dataKey="net" stroke={T.gold} strokeWidth={2} dot={false} activeDot={{ r: 3, fill: T.gold }} name="net" />
-                          </ComposedChart>
-                        </ResponsiveContainer>
-                        {(() => {
-                          const last = chartData[chartData.length - 1] as Record<string, number> | undefined;
-                          const net = last?.net ?? 0;
-                          return (
-                            <p style={{ fontSize: 13, color: T.textDim, marginTop: 10, lineHeight: 1.65, fontWeight: 500 }}>
-                              {net > 0
-                                ? `Net gain of ${net} venue${net !== 1 ? "s" : ""} last month — demand is growing.`
-                                : net < 0
-                                  ? `Net loss of ${Math.abs(net)} venue${Math.abs(net) !== 1 ? "s" : ""} last month — market contraction detected.`
-                                  : "Net venue change is flat — stable market conditions."}
-                            </p>
-                          );
-                        })()}
-                      </>
+                      <VenueGrowthChart data={chartData} />
                     )}
                   </div>
                 );
               })()}
+
+              {/* Signal radar overview */}
+              <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: "20px 24px", position: "relative", overflow: "hidden" }}>
+                <div style={{ position: "absolute", top: -40, left: -40, width: 160, height: 160, borderRadius: "50%", background: "radial-gradient(circle, rgba(13,197,204,0.05) 0%, transparent 70%)", pointerEvents: "none" }} />
+                <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 4 }}>
+                  <TrendingUp size={12} style={{ color: T.tealDim }} />
+                  <p style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: "0.22em", color: T.tealDim, textTransform: "uppercase", fontWeight: 800 }}>
+                    Signal Overview
+                  </p>
+                </div>
+                <p style={{ fontSize: 12, color: T.textDim, marginBottom: 8, fontWeight: 500 }}>
+                  All 5 scoring dimensions at a glance — hover to see individual scores.
+                </p>
+                <SignalRadar signals={detail.signals} />
+              </div>
 
               {/* Signal cards — full width */}
               <div>
@@ -595,7 +717,8 @@ function ReportContent() {
                 <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
                   {detail.signals.map((sig, i) => {
                     const isOpen = expandedSignals.has(i);
-                    const scoreColor =
+                    const pal = SIGNAL_PALETTE[sig.name] ?? { accent: T.teal, bg: "rgba(13,197,204,0.07)", border: "rgba(13,197,204,0.28)" };
+                    const sigScore =
                       sig.score >= 0.65 ? T.teal :
                         sig.score >= 0.40 ? T.gold : T.red;
                     return (
@@ -603,7 +726,13 @@ function ReportContent() {
                         key={sig.name}
                         initial={{ opacity: 0, x: -10 }} animate={{ opacity: 1, x: 0 }}
                         transition={{ delay: i * 0.07 }}
-                        style={{ border: `1px solid ${isOpen ? T.tealBorder : T.border}`, borderRadius: 10, overflow: "hidden", background: T.surface }}
+                        style={{
+                          border: `1px solid ${isOpen ? pal.border : T.border}`,
+                          borderRadius: 10,
+                          overflow: "hidden",
+                          background: isOpen ? pal.bg : T.surface,
+                          transition: "border-color 0.2s, background 0.2s",
+                        }}
                       >
                         {/* Header row — always visible, click to toggle */}
                         <button
@@ -614,24 +743,47 @@ function ReportContent() {
                           })}
                           style={{ width: "100%", display: "flex", alignItems: "center", gap: 10, padding: "12px 14px", background: "none", border: "none", cursor: "pointer", textAlign: "left" }}
                         >
-                          <span style={{ fontFamily: T.mono, fontSize: 10, color: T.textDim, fontWeight: 700, minWidth: 18 }}>
+                          <span style={{ fontFamily: T.mono, fontSize: 10, color: isOpen ? pal.accent : T.textDim, fontWeight: 700, minWidth: 18, transition: "color 0.2s" }}>
                             {String(i + 1).padStart(2, "0")}
                           </span>
-                          <span style={{ fontSize: 13, fontWeight: 700, color: T.text, flex: 1 }}>
+                          <div style={{ width: 3, height: 14, borderRadius: 2, background: isOpen ? pal.accent : "transparent", transition: "background 0.2s", flexShrink: 0 }} />
+                          <span style={{ fontSize: 13, fontWeight: 700, color: isOpen ? "#F0F0F2" : T.textMid, flex: 1, transition: "color 0.2s" }}>
                             {sig.name}
                           </span>
-                          <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 800, color: scoreColor, minWidth: 36, textAlign: "right" }}>
+                          <span style={{ fontFamily: T.mono, fontSize: 13, fontWeight: 800, color: sigScore, minWidth: 36, textAlign: "right" }}>
                             {(sig.score * 100).toFixed(0)}
                           </span>
                           <ChevronDown
                             size={13}
-                            style={{ color: T.textDim, flexShrink: 0, transition: "transform 0.2s", transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }}
+                            style={{ color: isOpen ? pal.accent : T.textDim, flexShrink: 0, transition: "transform 0.2s, color 0.2s", transform: isOpen ? "rotate(180deg)" : "rotate(0deg)" }}
                           />
                         </button>
                         {/* Collapsible body */}
                         {isOpen && (
-                          <div style={{ padding: "0 14px 14px 14px", borderTop: `1px solid ${T.border}` }}>
-                            <SignalCard signal={sig} insight={signalInsight(sig)} />
+                          <div style={{ padding: "0 14px 14px 14px", borderTop: `1px solid ${pal.border}` }}>
+                            <SignalCard
+                              signal={sig}
+                              explainStream={(onToken, onDone, onError) =>
+                                api.explainStream(
+                                  {
+                                    signal_name: sig.name,
+                                    score: sig.score,
+                                    badge: sig.badge,
+                                    chart_data: sig.chart_data as Record<string, unknown>[],
+                                    locality: detail.locality,
+                                    state: detail.state,
+                                    category: detail.category,
+                                  },
+                                  onToken,
+                                  onDone,
+                                  onError,
+                                )
+                              }
+                              explainState={explainState[i]}
+                              onExplainStateChange={(s) =>
+                                setExplainState((prev) => ({ ...prev, [i]: s }))
+                              }
+                            />
                           </div>
                         )}
                       </motion.div>
@@ -644,12 +796,74 @@ function ReportContent() {
 
             {/* Venue mix */}
             <div style={{ background: T.surface, border: `1px solid ${T.border}`, borderRadius: 16, padding: "22px 26px", marginBottom: 16 }}>
-              <p style={{ fontFamily: T.serif, fontSize: 18, fontWeight: 400, color: T.text, marginBottom: 4 }}>
-                Venue Mix in {detail.locality}
-              </p>
+              <div style={{ display: "flex", alignItems: "flex-start", justifyContent: "space-between", gap: 12, marginBottom: 4 }}>
+                <p style={{ fontFamily: T.serif, fontSize: 18, fontWeight: 400, color: T.text, margin: 0 }}>
+                  Venue Mix in {detail.locality}
+                </p>
+                <button
+                  onClick={() => {
+                    if (venueMixExplain.open) { setVenueMixExplain((s) => ({ ...s, open: false })); return; }
+                    setVenueMixExplain((s) => ({ ...s, open: true }));
+                    if (!venueMixExplain.text && !venueMixExplain.loading) {
+                      setVenueMixExplain((s) => ({ ...s, loading: true }));
+                      let acc = "";
+                      api.explainStream(
+                        { signal_name: "Venue Mix", score: detail.composite_score, badge: detail.tier,
+                          chart_data: detail.top_categories as Record<string, unknown>[],
+                          locality: detail.locality, state: detail.state, category },
+                        (token) => { acc += token; setVenueMixExplain((s) => ({ ...s, text: acc })); },
+                        (full) => setVenueMixExplain((s) => ({ ...s, text: full || acc, loading: false })),
+                        (err)  => setVenueMixExplain((s) => ({ ...s, loading: false, error: err })),
+                      );
+                    }
+                  }}
+                  style={{
+                    flexShrink: 0, display: "flex", alignItems: "center", gap: 6,
+                    padding: "7px 13px", borderRadius: 8,
+                    background: venueMixExplain.open ? `${T.teal}25` : "rgba(255,255,255,0.04)",
+                    border: `1px solid ${venueMixExplain.open ? `${T.teal}60` : "rgba(255,255,255,0.1)"}`,
+                    color: venueMixExplain.open ? T.teal : "rgba(180,195,210,0.6)",
+                    fontSize: 11, fontFamily: T.mono, fontWeight: 700, letterSpacing: "0.06em",
+                    cursor: venueMixExplain.loading ? "wait" : "pointer",
+                    opacity: venueMixExplain.loading ? 0.7 : 1,
+                  }}
+                >
+                  {venueMixExplain.loading
+                    ? <><span style={{ fontSize: 13 }}>⟳</span> Analysing…</>
+                    : <><span style={{ fontSize: 13 }}>💡</span> {venueMixExplain.open ? "Close" : "Explain"}</>}
+                </button>
+              </div>
               <p style={{ fontSize: 13, color: T.textDim, marginBottom: 18, lineHeight: 1.6, fontWeight: 500 }}>
                 A diverse mix of complementary businesses increases foot traffic and supports new openings.
               </p>
+
+              {/* AI explain panel */}
+              {venueMixExplain.open && (
+                <div style={{ marginBottom: 18, background: `${T.teal}0d`, border: `1px solid ${T.teal}35`, borderRadius: 10, padding: "14px 16px", position: "relative" }}>
+                  <div style={{ position: "absolute", left: 0, top: "12%", bottom: "12%", width: 3, borderRadius: 3, background: `linear-gradient(180deg, transparent, ${T.teal}, transparent)` }} />
+                  <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 10 }}>
+                    <span style={{ fontSize: 15 }}>💡</span>
+                    <span style={{ fontFamily: T.mono, fontSize: 10, letterSpacing: "0.2em", color: T.teal, textTransform: "uppercase" as const, fontWeight: 800 }}>AI Analysis</span>
+                    {venueMixExplain.loading && <span style={{ fontFamily: T.mono, fontSize: 9, color: "rgba(150,175,190,0.5)", letterSpacing: "0.1em" }}>GENERATING…</span>}
+                  </div>
+                  {venueMixExplain.text ? (
+                    <p style={{ fontSize: 14, color: "rgba(220,230,240,0.9)", lineHeight: 1.8, fontWeight: 500, margin: 0 }}>
+                      {venueMixExplain.text}{venueMixExplain.loading && <span style={{ opacity: 0.4 }}>▍</span>}
+                    </p>
+                  ) : venueMixExplain.loading ? (
+                    <div style={{ display: "flex", gap: 6, alignItems: "center", padding: "8px 0" }}>
+                      {[0, 1, 2].map((i) => (
+                        <div key={i} style={{ width: 6, height: 6, borderRadius: "50%", background: T.teal, opacity: 0.6 }} />
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: 13, color: "rgba(150,175,190,0.5)", fontStyle: "italic", margin: 0 }}>
+                      {venueMixExplain.error ? `Could not load: ${venueMixExplain.error}` : "No explanation available."}
+                    </p>
+                  )}
+                </div>
+              )}
+
               <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
                 {detail.top_categories.map((tc) => {
                   const maxCount = detail.top_categories[0]?.count ?? 1;
@@ -731,11 +945,11 @@ function ReportContent() {
 
 function HeaderSection({
   displayLocality, displayState, displayScore, displayTier, tierColor,
-  btbReason, h3id, venueCount, dataConfidence,
+  btbReason, venueCount, dataConfidence,
 }: {
   displayLocality: string; displayState: string; displayScore: number;
   displayTier: Tier; tierColor: string; btbReason: "benchmark" | "discovery" | null;
-  h3id: string; venueCount: number | null; dataConfidence: string | null;
+  venueCount: number | null; dataConfidence: string | null;
 }) {
   const confColor =
     dataConfidence === "HIGH" ? T.teal :
@@ -750,7 +964,7 @@ function HeaderSection({
     <div style={{ marginBottom: 28 }}>
       {/* Breadcrumb */}
       <p style={{ fontFamily: T.mono, fontSize: 11, letterSpacing: "0.22em", color: T.tealDim, textTransform: "uppercase", fontWeight: 700, marginBottom: 12 }}>
-        {h3id ? `Deep Dive Report // ${h3id}` : "Deep Dive Report"}
+        Deep Dive Report
       </p>
 
       {/* Name + stat boxes */}

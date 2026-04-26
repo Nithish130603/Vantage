@@ -48,9 +48,67 @@ const NAV_ITEMS = [
     icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><circle cx="6.5" cy="6.5" r="4.5" stroke="currentColor" strokeWidth="1.2"/><line x1="10" y1="10" x2="14" y2="14" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/><line x1="4.5" y1="6.5" x2="8.5" y2="6.5" stroke="currentColor" strokeWidth="1.1"/><line x1="6.5" y1="4.5" x2="6.5" y2="8.5" stroke="currentColor" strokeWidth="1.1"/></svg> },
   { label: "Recommendations", active: false, path: "/recommendations",
     icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><polygon points="7.5,1 9.5,5.5 14.5,6 11,9.5 12,14.5 7.5,12 3,14.5 4,9.5 0.5,6 5.5,5.5" stroke="currentColor" strokeWidth="1.1" strokeLinejoin="round"/></svg> },
-  { label: "Avoid Zones", active: false, path: "/map",
+  { label: "Avoid Zones", active: false, path: "/avoid",
     icon: <svg width="15" height="15" viewBox="0 0 15 15" fill="none"><circle cx="7.5" cy="7.5" r="6" stroke="currentColor" strokeWidth="1.2"/><line x1="3" y1="3" x2="12" y2="12" stroke="currentColor" strokeWidth="1.2" strokeLinecap="round"/></svg> },
 ];
+
+// ── Starfield canvas (minimal distant stars) ──────────────────────────────────
+
+function StarfieldCanvas() {
+  const ref = useRef<HTMLCanvasElement>(null);
+  useEffect(() => {
+    const canvas = ref.current;
+    if (!canvas) return;
+    const ctx = canvas.getContext("2d");
+    if (!ctx) return;
+
+    const resize = () => {
+      if (!canvas) return;
+      canvas.width  = window.innerWidth;
+      canvas.height = window.innerHeight;
+    };
+    resize();
+    window.addEventListener("resize", resize);
+
+    // Generate stars once — positions are stable, only brightness twinkles
+    const STAR_COUNT = 180;
+    const stars = Array.from({ length: STAR_COUNT }, () => ({
+      x:     Math.random(),
+      y:     Math.random(),
+      r:     Math.random() * 0.9 + 0.2,          // 0.2–1.1 px
+      base:  Math.random() * 0.18 + 0.04,         // base opacity 0.04–0.22
+      speed: Math.random() * 0.0008 + 0.0003,     // very slow twinkle
+      phase: Math.random() * Math.PI * 2,
+    }));
+
+    let raf: number;
+    let t = 0;
+    function draw() {
+      if (!ctx || !canvas) return;
+      ctx.clearRect(0, 0, canvas.width, canvas.height);
+      const W = canvas.width, H = canvas.height;
+      for (const s of stars) {
+        const twinkle = 0.5 + 0.5 * Math.sin(t * s.speed * 1000 + s.phase);
+        const alpha   = s.base + twinkle * 0.10;
+        ctx.beginPath();
+        ctx.arc(s.x * W, s.y * H, s.r, 0, Math.PI * 2);
+        ctx.fillStyle = `rgba(180,220,235,${alpha})`;
+        ctx.fill();
+      }
+      t++;
+      raf = requestAnimationFrame(draw);
+    }
+    draw();
+    return () => {
+      cancelAnimationFrame(raf);
+      window.removeEventListener("resize", resize);
+    };
+  }, []);
+
+  return (
+    <canvas ref={ref} style={{ position: "fixed", inset: 0, width: "100%", height: "100%", pointerEvents: "none", zIndex: 0 }} />
+  );
+}
 
 // ── World map canvas (fixed decorative background) ────────────────────────────
 
@@ -279,6 +337,9 @@ function TransitionOverlay({ messages, totalMs, onDone }: { messages: string[]; 
 
 function VantageSidebar({ open, onToggle }: { open: boolean; onToggle: () => void }) {
   const router = useRouter();
+  const [hasAnalysis, setHasAnalysis] = useState(false);
+  const [lockedNudge, setLockedNudge] = useState(false);
+  useEffect(() => { setHasAnalysis(!!sessionStorage.getItem("vantage_dna")); }, []);
   return (
     <motion.aside
       animate={{ width: open ? 218 : 60 }}
@@ -307,35 +368,17 @@ function VantageSidebar({ open, onToggle }: { open: boolean; onToggle: () => voi
             </motion.div>
           )}
         </AnimatePresence>
-        {!open && (
-          <div className="w-7 h-7 rounded flex items-center justify-center"
-            style={{ background: "rgba(0,210,230,0.1)", border: "1px solid rgba(0,210,230,0.3)" }}>
-            <svg width="13" height="13" viewBox="0 0 12 12" fill="none">
-              <circle cx="6" cy="6" r="2" fill="#0DC5CC"/>
-              <circle cx="6" cy="6" r="5" stroke="#0DC5CC" strokeWidth="0.8" strokeDasharray="2 1.5"/>
-            </svg>
-          </div>
-        )}
-        {open && (
-          <button onClick={() => onToggle()}
-            className="w-7 h-7 rounded flex items-center justify-center transition-all"
-            style={{ color: "rgba(0,210,230,0.4)", border: "1px solid rgba(0,210,230,0.14)", background: "transparent" }}
-            onMouseEnter={(e) => { e.currentTarget.style.color = "#0DC5CC"; e.currentTarget.style.borderColor = "rgba(0,210,230,0.4)"; }}
-            onMouseLeave={(e) => { e.currentTarget.style.color = "rgba(0,210,230,0.4)"; e.currentTarget.style.borderColor = "rgba(0,210,230,0.14)"; }}>
-            <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M7 2L4 5.5 7 9" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
-          </button>
-        )}
-      </div>
-
-      {/* Expand button (collapsed) */}
-      {!open && (
-        <button onClick={() => onToggle()} className="flex items-center justify-center mx-auto mt-3 w-8 h-8 rounded transition-all"
-          style={{ color: "rgba(0,210,230,0.5)", border: "1px solid rgba(0,210,230,0.18)", background: "rgba(0,210,230,0.04)" }}
-          onMouseEnter={(e) => { e.currentTarget.style.color = "#0DC5CC"; e.currentTarget.style.borderColor = "rgba(0,210,230,0.45)"; }}
-          onMouseLeave={(e) => { e.currentTarget.style.color = "rgba(0,210,230,0.5)"; e.currentTarget.style.borderColor = "rgba(0,210,230,0.18)"; }}>
-          <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M4 2l3 3.5-3 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
+        <button onClick={() => onToggle()}
+          className="w-7 h-7 rounded flex items-center justify-center transition-all shrink-0"
+          style={{ color: "rgba(0,210,230,0.4)", border: "1px solid rgba(0,210,230,0.14)", background: "transparent" }}
+          onMouseEnter={(e) => { e.currentTarget.style.color = "#0DC5CC"; e.currentTarget.style.borderColor = "rgba(0,210,230,0.4)"; }}
+          onMouseLeave={(e) => { e.currentTarget.style.color = "rgba(0,210,230,0.4)"; e.currentTarget.style.borderColor = "rgba(0,210,230,0.14)"; }}>
+          {open
+            ? <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M7 2L4 5.5 7 9" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
+            : <svg width="11" height="11" viewBox="0 0 11 11" fill="none"><path d="M4 2l3 3.5-3 3.5" stroke="currentColor" strokeWidth="1.3" strokeLinecap="round" strokeLinejoin="round"/></svg>
+          }
         </button>
-      )}
+      </div>
 
       {/* Nav label */}
       {open && (
@@ -346,34 +389,54 @@ function VantageSidebar({ open, onToggle }: { open: boolean; onToggle: () => voi
 
       {/* Nav items */}
       <nav className="flex-1 px-2 space-y-0.5 mt-1">
-        {NAV_ITEMS.map((item) => (
-          <div key={item.label}
-            onClick={() => router.push(item.path)}
-            className="flex items-center rounded-sm transition-all duration-150 cursor-pointer"
-            style={{
-              gap: open ? 10 : 0, justifyContent: open ? "flex-start" : "center",
-              padding: open ? "9px 10px" : "9px 0",
-              background: item.active ? "rgba(0,210,230,0.08)" : "transparent",
-              borderLeft: item.active && open ? "2px solid rgba(0,210,230,0.7)" : "2px solid transparent",
-              color: item.active ? "#0DC5CC" : "rgba(200,230,235,0.85)",
-            }}>
-            <span style={{ opacity: item.active ? 1 : 0.65, flexShrink: 0 }}>{item.icon}</span>
-            <AnimatePresence>
-              {open && (
-                <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
-                  transition={{ duration: 0.1 }}
-                  style={{ fontSize: 14, letterSpacing: "0.04em", whiteSpace: "nowrap", fontWeight: item.active ? 700 : 600 }}>
-                  {item.label}
-                </motion.span>
+        {NAV_ITEMS.map((item) => {
+          const locked = !item.active && !hasAnalysis;
+          return (
+            <div key={item.label}
+              onClick={() => {
+                if (item.active) return;
+                if (locked) { setLockedNudge(true); setTimeout(() => setLockedNudge(false), 2400); return; }
+                router.push(item.path);
+              }}
+              className="flex items-center rounded-sm transition-all duration-150"
+              style={{
+                gap: open ? 10 : 0, justifyContent: open ? "flex-start" : "center",
+                padding: open ? "9px 10px" : "9px 0",
+                background: item.active ? "rgba(0,210,230,0.08)" : "transparent",
+                borderLeft: item.active && open ? "2px solid rgba(0,210,230,0.7)" : "2px solid transparent",
+                color: item.active ? "#0DC5CC" : locked ? "rgba(200,230,235,0.28)" : "rgba(200,230,235,0.85)",
+                cursor: item.active ? "default" : locked ? "not-allowed" : "pointer",
+                opacity: locked ? 0.45 : 1,
+              }}>
+              <span style={{ opacity: item.active ? 1 : locked ? 0.4 : 0.65, flexShrink: 0 }}>{item.icon}</span>
+              <AnimatePresence>
+                {open && (
+                  <motion.span initial={{ opacity: 0 }} animate={{ opacity: 1 }} exit={{ opacity: 0 }}
+                    transition={{ duration: 0.1 }}
+                    style={{ fontSize: 14, letterSpacing: "0.04em", whiteSpace: "nowrap", fontWeight: item.active ? 700 : 600 }}>
+                    {item.label}
+                  </motion.span>
+                )}
+              </AnimatePresence>
+              {item.active && open && (
+                <motion.div className="ml-auto w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#0DC5CC" }}
+                  animate={{ opacity: [1, 0.3, 1] }} transition={{ duration: 1.8, repeat: Infinity }} />
               )}
-            </AnimatePresence>
-            {item.active && open && (
-              <motion.div className="ml-auto w-1.5 h-1.5 rounded-full" style={{ backgroundColor: "#0DC5CC" }}
-                animate={{ opacity: [1, 0.3, 1] }} transition={{ duration: 1.8, repeat: Infinity }} />
-            )}
-          </div>
-        ))}
+              {locked && open && (
+                <svg className="ml-auto" width="10" height="10" viewBox="0 0 10 10" fill="none">
+                  <rect x="1.5" y="4.5" width="7" height="5" rx="1" stroke="rgba(0,210,230,0.25)" strokeWidth="1"/>
+                  <path d="M3 4.5V3a2 2 0 014 0v1.5" stroke="rgba(0,210,230,0.25)" strokeWidth="1" strokeLinecap="round"/>
+                </svg>
+              )}
+            </div>
+          );
+        })}
       </nav>
+      {lockedNudge && open && (
+        <div className="mx-3 mb-2 px-3 py-2 rounded-sm" style={{ background: "rgba(0,210,230,0.06)", border: "1px solid rgba(0,210,230,0.2)", fontSize: 11, color: "rgba(0,210,230,0.7)", fontFamily: "var(--font-geist-mono)", letterSpacing: "0.04em", lineHeight: 1.5 }}>
+          Run your first analysis on the Dashboard to unlock.
+        </div>
+      )}
 
       {/* System status */}
       <AnimatePresence>
@@ -488,6 +551,7 @@ function DnaContent() {
   const [showSave, setShowSave]       = useState(false);
   const [isLoggedIn, setIsLoggedIn]   = useState(false);
   const [region, setRegion]           = useState("All Australia");
+  const [storedMode, setStoredMode]   = useState("existing");
   const [sidebarOpen, setSidebarOpen] = useState(true);
   const [showEntry, setShowEntry]     = useState(false);
   const [showExit, setShowExit]       = useState(false);
@@ -507,7 +571,8 @@ function DnaContent() {
     const stored = sessionStorage.getItem("vantage_dna");
     const cat    = sessionStorage.getItem("vantage_category") ?? "Gym & Fitness";
     const rgn    = sessionStorage.getItem("vantage_region") ?? "All Australia";
-    setCategory(cat); setRegion(rgn);
+    const mode   = sessionStorage.getItem("vantage_mode") ?? "existing";
+    setCategory(cat); setRegion(rgn); setStoredMode(mode);
     let parsedFp: FingerprintResponse | null = null;
     if (stored) {
       try { parsedFp = JSON.parse(stored) as FingerprintResponse; setFp(parsedFp); } catch { /* noop */ }
@@ -535,6 +600,7 @@ function DnaContent() {
   if (!fp) {
     return (
       <div style={{ display: "flex", height: "100vh", overflow: "hidden", backgroundColor: "#020509" }}>
+        <StarfieldCanvas />
         <WorldMapCanvas />
         <VantageSidebar open={sidebarOpen} onToggle={() => setSidebarOpen(!sidebarOpen)} />
         <div style={{ flex: 1, display: "flex", alignItems: "center", justifyContent: "center", position: "relative", zIndex: 1 }}>
@@ -549,19 +615,11 @@ function DnaContent() {
     );
   }
 
-  const isFresh         = fp.mode === "fresh" || fp.n_locations === 0;
-  const topCats         = fp.top_categories.slice(0, 3);
-  const confidenceColor = { HIGH: "rgba(0,210,230,0.9)", MEDIUM: "#D4A017", LOW: "#C0392B" }[fp.data_confidence] ?? "rgba(150,150,160,0.7)";
-  const dnaDrivers      = topCats.map((c) => c.category).join(", ");
-  const successSummary  = isFresh
-    ? `Across Australia, top-performing ${category.toLowerCase()} businesses are consistently found near ${dnaDrivers || "high-footfall commercial areas"}.`
-    : fp.n_locations >= 1
-    ? `Your strongest locations share a clear pattern: they're near ${dnaDrivers || "similar commercial environments"}. This is your franchise DNA.`
-    : "";
-  const rawHint   = fp.improvement_hint ?? "";
-  const plainHint = rawHint
-    .replace(/Gold standard locations have more:/i, `Successful ${category.toLowerCase()} businesses are typically surrounded by more:`)
-    .replace(/Your DNA closely matches the gold standard/i, "Your location profile closely matches the industry benchmark");
+  const isExistingStores = storedMode === "existing";
+  const isFresh          = !isExistingStores;
+  const topCats          = fp.top_categories.slice(0, 3);
+  const successSummary   = fp.dna_summary ?? "";
+  const plainHint        = fp.improvement_hint ?? "";
 
   function handleExplore() {
     if (sessionStorage.getItem("vantage_dna_exit_played")) {
@@ -577,6 +635,7 @@ function DnaContent() {
 
   return (
     <div style={{ display: "flex", height: "100vh", overflow: "hidden", backgroundColor: "#020509" }}>
+      <StarfieldCanvas />
       <WorldMapCanvas />
 
       {/* ── Transition overlays ── */}
@@ -625,19 +684,21 @@ function DnaContent() {
               )}
             </div>
 
-            {/* Hero % */}
-            <motion.div
-              initial={{ opacity: 0, scale: 0.88 }} animate={{ opacity: 1, scale: 1 }}
-              transition={{ duration: 0.65, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
-              style={{ textAlign: "right", flexShrink: 0, marginLeft: 32 }}
-            >
-              <p style={{ fontFamily: "var(--font-fraunces)", fontSize: 88, fontWeight: 300, color: "rgba(0,210,230,0.92)", lineHeight: 1, textShadow: "0 0 48px rgba(0,210,230,0.22)" }}>
-                {fp.gold_standard_match_pct}%
-              </p>
-              <p style={{ fontSize: 9, fontFamily: "var(--font-geist-mono)", letterSpacing: "0.2em", color: "rgba(255,255,255,0.22)", marginTop: 6, fontWeight: 600 }}>
-                BENCHMARK MATCH
-              </p>
-            </motion.div>
+            {/* Hero % — only shown for existing stores mode */}
+            {isExistingStores && (
+              <motion.div
+                initial={{ opacity: 0, scale: 0.88 }} animate={{ opacity: 1, scale: 1 }}
+                transition={{ duration: 0.65, delay: 0.2, ease: [0.22, 1, 0.36, 1] }}
+                style={{ textAlign: "right", flexShrink: 0, marginLeft: 32 }}
+              >
+                <p style={{ fontFamily: "var(--font-fraunces)", fontSize: 88, fontWeight: 300, color: "rgba(0,210,230,0.92)", lineHeight: 1, textShadow: "0 0 48px rgba(0,210,230,0.22)" }}>
+                  {fp.gold_standard_match_pct}%
+                </p>
+                <p style={{ fontSize: 9, fontFamily: "var(--font-geist-mono)", letterSpacing: "0.2em", color: "rgba(255,255,255,0.22)", marginTop: 6, fontWeight: 600 }}>
+                  BENCHMARK MATCH
+                </p>
+              </motion.div>
+            )}
           </motion.div>
 
           {/* ── Summary strip ── */}
@@ -658,9 +719,9 @@ function DnaContent() {
             {/* DNA Fingerprint */}
             {topCats.length > 0 && (
               <InsightCard
-                label="Your success DNA"
+                label={isExistingStores ? "Your success DNA" : `Top performing ${category.toLowerCase()} DNA`}
                 delay={0.3}
-                explainer={`These are the types of businesses most commonly found near your best locations. When a suburb has lots of these nearby, it's a strong signal it could work well for your ${category.toLowerCase()}.`}
+                explainer={fp.explainer_dna}
               >
                 <div style={{ display: "flex", flexDirection: "column", gap: 13 }}>
                   {topCats.map((tc) => (
@@ -675,7 +736,7 @@ function DnaContent() {
                     </div>
                   ))}
                   <p style={{ fontSize: 12, color: "rgba(150,162,175,0.65)", lineHeight: 1.55, marginTop: 2 }}>
-                    Strength of each signal in predicting {isFresh ? "industry" : "your"} success.
+                    Strength of each signal in predicting {isExistingStores ? "your" : "industry"} success.
                   </p>
                 </div>
               </InsightCard>
@@ -686,14 +747,14 @@ function DnaContent() {
               <InsightCard
                 label="Where to look in Australia"
                 delay={0.35}
-                explainer="We scored every Australian suburb based on how closely it matches your DNA. 'Top opportunities' are the ones most likely to succeed. 'Avoid' areas have risk factors like high closure rates or oversaturation."
+                explainer={fp.explainer_opportunities}
               >
                 <div>
                   <TierStat color={TIER_COLOR.BETTER_THAN_BEST} label="Top opportunities — outperform the benchmark" count={tierCounts.BETTER_THAN_BEST ?? 0} />
                   <TierStat color={TIER_COLOR.STRONG} label="Strong — solid expansion candidates" count={tierCounts.STRONG ?? 0} />
                   <TierStat color={TIER_COLOR.WATCH} label="Watch — proceed with caution" count={tierCounts.WATCH ?? 0} />
                   <TierStat color={TIER_COLOR.AVOID} label="Avoid — risk signals elevated" count={avoidCount} />
-                  {goldCount > 0 && (
+                  {isExistingStores && goldCount > 0 && (
                     <p style={{ fontSize: 12, color: "rgba(0,210,230,0.72)", marginTop: 10, paddingTop: 10, borderTop: "1px solid rgba(0,210,230,0.08)", lineHeight: 1.55, fontWeight: 500 }}>
                       ★ {goldCount} suburb{goldCount !== 1 ? "s" : ""} beat the gold standard — your clearest first-mover opportunities.
                     </p>
@@ -702,69 +763,69 @@ function DnaContent() {
               </InsightCard>
             )}
 
-            {/* Benchmark detail */}
-            <InsightCard
-              label="How you compare to the best"
-              delay={0.4}
-              explainer={`We compared your profile against Australia's top-performing ${category.toLowerCase()} businesses. Above 70% means your locations are in environments very similar to the best in the country.`}
-            >
-              <div style={{ display: "flex", alignItems: "flex-end", gap: 14, marginBottom: 4 }}>
-                <p style={{ fontFamily: "var(--font-fraunces)", fontSize: 56, fontWeight: 300, color: "rgba(0,210,230,0.92)", lineHeight: 1 }}>
-                  {fp.gold_standard_match_pct}%
-                </p>
-                <span style={{ fontSize: 9, fontFamily: "var(--font-geist-mono)", letterSpacing: "0.14em", padding: "3px 8px", borderRadius: 3, border: `1px solid ${confidenceColor}40`, color: confidenceColor, backgroundColor: `${confidenceColor}12`, marginBottom: 7, fontWeight: 600 }}>
-                  {fp.data_confidence} CONFIDENCE
-                </span>
-              </div>
-              <ScoreBar value={fp.gold_standard_match_pct} />
-              {plainHint && (
-                <p style={{ fontSize: 12, color: "rgba(165,175,188,0.78)", marginTop: 12, lineHeight: 1.65, fontWeight: 400 }}>
-                  {plainHint}
-                </p>
-              )}
-            </InsightCard>
+            {/* Benchmark detail + Locations used — only for existing stores */}
+            {isExistingStores && (
+              <>
+                <InsightCard
+                  label="How you compare to the best"
+                  delay={0.4}
+                  explainer={fp.explainer_comparison}
+                >
+                  <div style={{ display: "flex", alignItems: "flex-end", gap: 14, marginBottom: 4 }}>
+                    <p style={{ fontFamily: "var(--font-fraunces)", fontSize: 56, fontWeight: 300, color: "rgba(0,210,230,0.92)", lineHeight: 1 }}>
+                      {fp.gold_standard_match_pct}%
+                    </p>
+                  </div>
+                  <ScoreBar value={fp.gold_standard_match_pct} />
+                  {plainHint && (
+                    <p style={{ fontSize: 12, color: "rgba(165,175,188,0.78)", marginTop: 12, lineHeight: 1.65, fontWeight: 400 }}>
+                      {plainHint}
+                    </p>
+                  )}
+                </InsightCard>
 
-            {/* Locations used */}
-            <InsightCard
-              label="Locations used in this analysis"
-              delay={0.4}
-              explainer="These are the exact locations we used to build your DNA. The more you add, the more accurate your results."
-            >
-              {fp.n_locations >= 1 && fp.n_locations <= 4 && (
-                <div style={{ display: "flex", alignItems: "flex-start", gap: 8, paddingBottom: 12, marginBottom: 4, borderBottom: "1px solid rgba(0,210,230,0.07)" }}>
-                  <CheckCircle size={13} style={{ color: "rgba(0,210,230,0.65)", marginTop: 1, flexShrink: 0 }} />
-                  <p style={{ fontSize: 12, color: "rgba(175,185,195,0.88)", lineHeight: 1.65, fontWeight: 400 }}>
-                    Based on{" "}
-                    <span style={{ color: "rgba(240,242,245,0.92)", fontWeight: 600 }}>
-                      {fp.n_locations} location{fp.n_locations > 1 ? "s" : ""}
-                    </span>{" "}
-                    — blended with industry data for reliability.
-                  </p>
-                </div>
-              )}
-              {Object.keys(fp.resolved_suburbs ?? {}).length > 0 ? (
-                <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-                  {Object.entries(fp.resolved_suburbs).map(([input, resolved]) => (
-                    <span key={input} style={{ fontSize: 10, fontFamily: "var(--font-geist-mono)", padding: "3px 9px", borderRadius: 4, border: "1px solid rgba(0,210,230,0.22)", color: "rgba(0,210,230,0.84)", background: "rgba(0,210,230,0.05)", fontWeight: 500 }}>
-                      {input.toLowerCase() !== resolved.split(",")[0].toLowerCase() ? `${input} → ${resolved} ✓` : `${resolved} ✓`}
-                    </span>
-                  ))}
-                </div>
-              ) : (
-                <p style={{ fontSize: 12, color: "rgba(140,150,162,0.55)", fontWeight: 400 }}>Using industry benchmark data — no custom locations added.</p>
-              )}
-              {fp.unrecognised_suburbs.length > 0 && (
-                <div style={{ marginTop: 8, padding: "8px 12px", background: "rgba(212,160,23,0.07)", borderRadius: 6, border: "1px solid rgba(212,160,23,0.2)" }}>
-                  <p style={{ fontSize: 11, color: "#D4A017", lineHeight: 1.55, fontWeight: 500 }}>
-                    <span style={{ fontWeight: 600 }}>Could not find:</span>{" "}
-                    {fp.unrecognised_suburbs.join(", ")}
-                    <span style={{ display: "block", color: "rgba(212,160,23,0.55)", marginTop: 3, fontWeight: 400 }}>
-                      Try the full suburb name (e.g. &quot;Surry Hills&quot;)
-                    </span>
-                  </p>
-                </div>
-              )}
-            </InsightCard>
+                <InsightCard
+                  label="Locations used in this analysis"
+                  delay={0.4}
+                  explainer={fp.explainer_locations}
+                >
+                  {fp.n_locations >= 1 && fp.n_locations <= 4 && (
+                    <div style={{ display: "flex", alignItems: "flex-start", gap: 8, paddingBottom: 12, marginBottom: 4, borderBottom: "1px solid rgba(0,210,230,0.07)" }}>
+                      <CheckCircle size={13} style={{ color: "rgba(0,210,230,0.65)", marginTop: 1, flexShrink: 0 }} />
+                      <p style={{ fontSize: 12, color: "rgba(175,185,195,0.88)", lineHeight: 1.65, fontWeight: 400 }}>
+                        Based on{" "}
+                        <span style={{ color: "rgba(240,242,245,0.92)", fontWeight: 600 }}>
+                          {fp.n_locations} location{fp.n_locations > 1 ? "s" : ""}
+                        </span>{" "}
+                        — blended with industry data for reliability.
+                      </p>
+                    </div>
+                  )}
+                  {Object.keys(fp.resolved_suburbs ?? {}).length > 0 ? (
+                    <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+                      {Object.entries(fp.resolved_suburbs).map(([input, resolved]) => (
+                        <span key={input} style={{ fontSize: 10, fontFamily: "var(--font-geist-mono)", padding: "3px 9px", borderRadius: 4, border: "1px solid rgba(0,210,230,0.22)", color: "rgba(0,210,230,0.84)", background: "rgba(0,210,230,0.05)", fontWeight: 500 }}>
+                          {input.toLowerCase() !== resolved.split(",")[0].toLowerCase() ? `${input} → ${resolved} ✓` : `${resolved} ✓`}
+                        </span>
+                      ))}
+                    </div>
+                  ) : (
+                    <p style={{ fontSize: 12, color: "rgba(140,150,162,0.55)", fontWeight: 400 }}>Using industry benchmark data — no custom locations added.</p>
+                  )}
+                  {fp.unrecognised_suburbs.length > 0 && (
+                    <div style={{ marginTop: 8, padding: "8px 12px", background: "rgba(212,160,23,0.07)", borderRadius: 6, border: "1px solid rgba(212,160,23,0.2)" }}>
+                      <p style={{ fontSize: 11, color: "#D4A017", lineHeight: 1.55, fontWeight: 500 }}>
+                        <span style={{ fontWeight: 600 }}>Could not find:</span>{" "}
+                        {fp.unrecognised_suburbs.join(", ")}
+                        <span style={{ display: "block", color: "rgba(212,160,23,0.55)", marginTop: 3, fontWeight: 400 }}>
+                          Try the full suburb name (e.g. &quot;Surry Hills&quot;)
+                        </span>
+                      </p>
+                    </div>
+                  )}
+                </InsightCard>
+              </>
+            )}
 
             {/* Failure pattern — full width, conditional */}
             {fp.failure_summary && (
@@ -772,7 +833,7 @@ function DnaContent() {
                 label="Locations to avoid"
                 delay={0.45}
                 colSpan={2}
-                explainer="These patterns come from your underperforming locations. We flag any suburb that looks similar so you don't repeat the same mistakes."
+                explainer={fp.explainer_risk}
               >
                 <div style={{ display: "flex", alignItems: "flex-start", gap: 10 }}>
                   <AlertTriangle size={15} style={{ color: "#D4A017", marginTop: 2, flexShrink: 0 }} />
@@ -836,7 +897,7 @@ function DnaContent() {
           category={category}
           region={region}
           fingerprintResult={fp as unknown as Record<string, unknown>}
-          onSaved={() => router.push("/dashboard")}
+          onSaved={() => router.push("/profile")}
         />
       )}
     </div>
