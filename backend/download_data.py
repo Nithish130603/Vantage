@@ -15,7 +15,9 @@ HF_TOKEN = os.environ.get("HF_TOKEN", "")
 BASE_URL  = "https://huggingface.co/datasets/nithish13063/vantage-data/resolve/main"
 BASE_DIR  = Path(__file__).parent
 
-FILES = ["vantage.duckdb", "tfidf.pkl", "reducer.pkl"]
+FILES = ["vantage.duckdb", "tfidf.pkl"]
+if os.environ.get("ENABLE_UMAP") == "1":
+    FILES.append("reducer.pkl")
 
 
 def download_file(filename: str) -> None:

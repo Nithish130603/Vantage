@@ -12,6 +12,7 @@ from __future__ import annotations
 
 import json
 import logging
+import os
 import re
 import threading
 import warnings
@@ -140,12 +141,17 @@ async def lifespan(app: FastAPI):
     else:
         log.info("TF-IDF is clean — skipping rebuild")
 
-    # Load UMAP reducer (may fail due to numba version mismatch)
-    try:
-        state["reducer"] = joblib.load(reducer_path) if reducer_path.exists() else None
-    except Exception as exc:
-        log.warning(f"Could not load reducer.pkl ({exc}) — UMAP projection disabled")
-        state["reducer"] = None
+    # UMAP reducer is disabled in production — joblib.load on reducer.pkl
+    # segfaults with newer numba versions (C-level crash, can't be caught).
+    # UMAP scatter projection is a non-critical feature; skip it entirely.
+    # To enable locally, set ENABLE_UMAP=1.
+    state["reducer"] = None
+    if os.environ.get("ENABLE_UMAP") == "1" and reducer_path.exists():
+        try:
+            state["reducer"] = joblib.load(reducer_path)
+        except Exception as exc:
+            log.warning(f"Could not load reducer.pkl ({exc}) — UMAP projection disabled")
+            state["reducer"] = None
 
     # Pre-build suburb TF-IDF matrix using clean leaf categories
     suburb_docs = state["con"].execute("""
