@@ -24,6 +24,48 @@ from routers.location import (
 router = APIRouter()
 
 
+def _run_comparison_agent(
+    category: str,
+    h3_r7_list: list[str],
+    fingerprint_result: dict | None,
+    top_categories: list[dict] | None,
+) -> dict:
+    """Invoke the LangGraph comparison_agent for an AI-driven head-to-head."""
+    if not os.environ.get("COHERE_API_KEY") or len(h3_r7_list) < 2:
+        return {}
+    try:
+        from agents.graph import vantage_graph
+        fp_payload = fingerprint_result or {}
+        if not fp_payload and top_categories:
+            fp_payload = {"top_categories": top_categories}
+        graph_state = {
+            "messages": [],
+            "task": "compare",
+            "next_agent": "",
+            "completed": [],
+            "category": category,
+            "h3_r7": None,
+            "h3_r7_list": h3_r7_list,
+            "fingerprint_result": fp_payload,
+            "user_question": None,
+            "conversation_history": None,
+            "eda_insights": None,
+            "statistician_report": None,
+            "confidence_badges": None,
+            "dna_narrative": None,
+            "opportunity_analysis": None,
+            "risk_assessment": None,
+            "comparison_result": None,
+            "chat_response": None,
+            "report_sections": None,
+            "final_output": None,
+        }
+        result = vantage_graph.invoke(graph_state)
+        return result.get("comparison_result") or {}
+    except Exception:
+        return {}
+
+
 class SavedSuburb(BaseModel):
     h3_r7: str
     locality: str
@@ -412,6 +454,27 @@ def generate_pdf_report(body: ReportRequest):
                 })
 
     monthly = data["monthly"]
+
+    # Run the LangGraph comparison agent when there are other saved suburbs.
+    # This produces a fully agentic AI verdict (uses tools, real data) that
+    # we merge into the PDF's comparison section.
+    fingerprint_payload: dict | None = None
+    if body.success_vector or body.failure_vector or body.top_categories or body.dna_summary:
+        fingerprint_payload = {
+            "success_vector": body.success_vector,
+            "failure_vector": body.failure_vector,
+            "top_categories": body.top_categories or [],
+            "dna_summary":    body.dna_summary,
+        }
+
+    agent_compare: dict = {}
+    if saved_data:
+        agent_compare = _run_comparison_agent(
+            category=body.category,
+            h3_r7_list=[body.h3_r7] + [s.h3_r7 for s in (body.saved_suburbs or []) if s.h3_r7 != body.h3_r7][:4],
+            fingerprint_result=fingerprint_payload,
+            top_categories=body.top_categories,
+        )
 
     try:
         narrative = _ai_narrative(
@@ -816,12 +879,29 @@ def generate_pdf_report(body: ReportRequest):
         story.append(cmp_tbl)
         story.append(sp(10))
 
-        # AI verdict after comparison table
-        if narrative.get("comparison_verdict"):
+        # ── Agentic AI verdict (LangGraph comparison_agent) ───────────────────
+        agent_verdict_lines: list[str] = []
+        if agent_compare:
+            for key in ("winner", "differentiators", "verdict"):
+                val = (agent_compare.get(key) or "").strip().strip("*").strip(":").strip()
+                if val:
+                    label = key.replace("_", " ").title()
+                    agent_verdict_lines.append(f"<b>{label}.</b> {val}")
+            red_flags = (agent_compare.get("red_flags") or "").strip().strip("*").strip(":").strip()
+            if red_flags and red_flags.lower() not in {"none.", "none", "no red flags."}:
+                agent_verdict_lines.append(f"<b>Red flags.</b> {red_flags}")
+
+        verdict_text = (
+            "<br/><br/>".join(agent_verdict_lines)
+            if agent_verdict_lines
+            else (narrative.get("comparison_verdict") or "").strip()
+        )
+
+        if verdict_text:
             verdict_box = Table([[
                 Paragraph("OUR TAKE ON THE COMPARISON", S(fontSize=8, fontName="Helvetica-Bold",
                                                            textColor=TEAL, spaceAfter=4)),
-                Paragraph(narrative["comparison_verdict"],
+                Paragraph(verdict_text,
                           S(fontSize=9, textColor=DARK, leading=14)),
             ]], colWidths=[4.8*cm, W - 4.8*cm])
             verdict_box.setStyle(TableStyle([

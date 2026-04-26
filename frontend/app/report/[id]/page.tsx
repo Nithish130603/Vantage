@@ -495,7 +495,11 @@ function ReportContent() {
         catch { return {}; }
       })();
       const savedSuburbs = savedH3s
-        .filter((h) => h !== id && (savedMeta[h]?.storeType ?? "") === (category ?? ""))
+        .filter((h) => {
+          if (h === id) return false;
+          const t = savedMeta[h]?.storeType;
+          return !t || t === category;
+        })
         .slice(0, 5)
         .map((h) => ({
           h3_r7: h,
